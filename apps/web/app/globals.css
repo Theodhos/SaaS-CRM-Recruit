@@ -1,0 +1,3 @@
+/* Tailwind directives + shadcn/ui theme tokens live in @crm/ui so every
+   consumer (this app, future ones) shares one design-token source. */
+@import '@crm/ui/styles.css';

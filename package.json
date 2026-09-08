@@ -1,0 +1,52 @@
+{
+  "name": "recruitment-crm-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-tenant Recruitment CRM + ATS platform monorepo",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "lint:fix": "turbo run lint -- --fix",
+    "type-check": "turbo run type-check",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore",
+    "clean": "turbo run clean && rimraf node_modules",
+    "db:generate": "pnpm --filter @crm/database db:generate",
+    "db:migrate": "pnpm --filter @crm/database db:migrate",
+    "db:migrate:deploy": "pnpm --filter @crm/database db:migrate:deploy",
+    "db:seed": "pnpm --filter @crm/database db:seed",
+    "db:studio": "pnpm --filter @crm/database db:studio",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-import-resolver-typescript": "^3.6.3",
+    "eslint-plugin-import": "^2.30.0",
+    "husky": "^9.1.0",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.3.0",
+    "rimraf": "^5.0.0",
+    "turbo": "^2.1.0",
+    "typescript": "^5.5.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix"
+    ],
+    "*.{ts,tsx,js,jsx,json,md}": [
+      "prettier --write"
+    ]
+  }
+}

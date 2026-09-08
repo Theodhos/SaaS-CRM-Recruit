@@ -1,0 +1,1273 @@
+// =============================================================================
+// Recruitment CRM + ATS Platform — Prisma Schema
+//
+// Design principles (see docs/architecture/database.md for the full writeup):
+// - Organisation is the tenant boundary. Nearly every model carries
+//   organisationId and MUST be filtered by it at the query layer (see
+//   packages/database/src/tenant + apps/api TenantGuard). This schema alone
+//   does not enforce isolation — application-level enforcement is mandatory.
+// - Entities carry the MINIMUM fields needed to identify and operate the
+//   object. Resist adding fields "just in case" — extend later when a real
+//   requirement shows up; it never breaks this structure.
+// - Normal foreign keys are used everywhere a relationship has a small,
+//   fixed set of possible parents (Activity, Task, CalendarEvent, Comment,
+//   Document all use explicit nullable FKs, not a polymorphic
+//   entityType/entityId pair). The one deliberate exception is
+//   CandidateTag/Tag — see the Tag section below for why.
+// - Soft delete (`deletedAt`) is used only on the handful of high-value,
+//   user-facing records where losing history would hurt: Candidate,
+//   Company, Contact, Job, Application. Everything else is either
+//   append-only (Activity, AuditLog) or safe to hard-delete (join tables).
+// - IDs use cuid() for collision-safe, sortable-ish, non-guessable keys.
+// - See docs/database/relationships.md for the full ERD narrative.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum TeamMemberRole {
+  LEAD
+  MEMBER
+}
+
+enum CompanyStatus {
+  PROSPECT
+  ACTIVE_CLIENT
+  FORMER_CLIENT
+  INACTIVE
+}
+
+enum ContactStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CandidateStatus {
+  ACTIVE
+  PASSIVE
+  DO_NOT_CONTACT
+  PLACED
+  ARCHIVED
+}
+
+// Kept intentionally small — see JOB section in the spec: "Do not hardcode
+// UI behavior around one status." New values are a migration, not a rewrite.
+enum JobStatus {
+  OPEN
+  ON_HOLD
+  CLOSED
+}
+
+enum EmploymentType {
+  PERMANENT
+  CONTRACT
+  TEMPORARY
+  PART_TIME
+}
+
+enum ApplicationStatus {
+  ACTIVE
+  ON_HOLD
+  REJECTED
+  WITHDRAWN
+  PLACED
+}
+
+enum ApplicationSource {
+  SOURCED
+  INBOUND
+  REFERRAL
+  JOB_BOARD
+  AGENCY
+  CAREER_SITE
+  OTHER
+}
+
+// PipelineStage.type — a small, code-understood classification so business
+// logic (e.g. "this move should create a Placement") never has to
+// string-match a stage's display name. STANDARD covers every ordinary
+// working stage (New, Shortlisted, Sent, Interview, Offer, ...).
+enum PipelineStageType {
+  STANDARD
+  PLACED
+  REJECTED
+}
+
+enum ActivityType {
+  CALL
+  EMAIL
+  MEETING
+  INTERVIEW
+  NOTE
+  FOLLOW_UP
+  STATUS_CHANGE
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum CalendarEventType {
+  MEETING
+  INTERVIEW
+  CALL
+}
+
+enum CalendarEventStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum EmailMessageStatus {
+  DRAFT
+  SENT
+  FAILED
+}
+
+// Shared by CandidateDocument and Document.
+enum DocumentType {
+  CV
+  RESUME
+  COVER_LETTER
+  CONTRACT
+  OFFER_LETTER
+  OTHER
+}
+
+enum PlacementStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum FeeStatus {
+  PENDING
+  INVOICED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum RetainerStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum RenewalStatus {
+  PENDING
+  RENEWED
+  LAPSED
+  CANCELLED
+}
+
+enum IntegrationStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+  PENDING_SETUP
+}
+
+// =============================================================================
+// TENANCY, IDENTITY, RBAC
+// =============================================================================
+
+model Organisation {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  status    String   @default("ACTIVE") // ACTIVE | TRIAL | SUSPENDED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users               User[]
+  roles               Role[]
+  teams               Team[]
+  companies           Company[]
+  contacts            Contact[]
+  candidates          Candidate[]
+  candidateDocuments  CandidateDocument[]
+  tags                Tag[]
+  jobs                Job[]
+  pipelines           Pipeline[]
+  applications        Application[]
+  activities          Activity[]
+  tasks               Task[]
+  calendarEvents      CalendarEvent[]
+  interviews          Interview[]
+  emailThreads        EmailThread[]
+  documents           Document[]
+  comments            Comment[]
+  talentPools         TalentPool[]
+  distributionLists   DistributionList[]
+  placements          Placement[]
+  fees                Fee[]
+  retainers           Retainer[]
+  renewals            Renewal[]
+  notifications       Notification[]
+  reports             Report[]
+  userEngagementEvents UserEngagementEvent[]
+  auditLogs           AuditLog[]
+  integrations        Integration[]
+
+  @@map("organisations")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  firstName    String
+  lastName     String
+  email        String
+  passwordHash String
+  avatarUrl    String?
+  status       UserStatus @default(INVITED)
+
+  roleId String
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teamMemberships TeamMember[]
+
+  ownedCompanies    Company[]     @relation("CompanyOwner")
+  ownedContacts     Contact[]     @relation("ContactOwner")
+  ownedCandidates   Candidate[]   @relation("CandidateOwner")
+  ownedJobs         Job[]         @relation("JobOwner")
+  ownedApplications Application[] @relation("ApplicationOwner")
+  ownedTalentPools  TalentPool[]  @relation("TalentPoolOwner")
+  ownedDistributionLists DistributionList[] @relation("DistributionListOwner")
+  ownedPlacements   Placement[]   @relation("PlacementOwner")
+
+  assignedTasks Task[] @relation("TaskAssignee")
+  createdTasks  Task[] @relation("TaskCreator")
+
+  calendarEvents CalendarEvent[] @relation("CalendarEventOwner")
+  activities     Activity[]      @relation("ActivityUser")
+  interviews     Interview[]     @relation("InterviewInterviewer")
+
+  uploadedDocuments          Document[]          @relation("DocumentUploader")
+  uploadedCandidateDocuments CandidateDocument[]  @relation("CandidateDocumentUploader")
+  comments                   Comment[]           @relation("CommentAuthor")
+
+  taggedCandidateTags          CandidateTag[]            @relation("CandidateTagTaggedBy")
+  addedTalentPoolMembers       TalentPoolMember[]        @relation("TalentPoolMemberAddedBy")
+  addedDistributionListMembers DistributionListMember[]  @relation("DistributionListMemberAddedBy")
+
+  reportsCreated        Report[]      @relation("ReportCreatedBy")
+  integrationsConnected Integration[] @relation("IntegrationConnectedBy")
+
+  notifications        Notification[]
+  auditLogs             AuditLog[]
+  userEngagementEvents  UserEngagementEvent[]
+
+  @@unique([organisationId, email])
+  @@index([organisationId])
+  @@map("users")
+}
+
+// Simple RBAC: one Role per User (no many-to-many), a Role is a named
+// bundle of Permissions via RolePermission. See docs/architecture/authorization.md.
+model Role {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name        String // e.g. "Admin", "Recruiter", "Manager", "Consultant", "Viewer"
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users           User[]
+  rolePermissions RolePermission[]
+
+  @@unique([organisationId, name])
+  @@index([organisationId])
+  @@map("roles")
+}
+
+// Global, code-defined permission catalog (e.g. "candidate:create"). Not
+// organisation-scoped — new permissions ship via migration/seed, never
+// hand-authored per tenant.
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique // e.g. "candidate:create"
+  module      String   // e.g. "candidates"
+  description String?
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model Team {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members TeamMember[]
+
+  @@index([organisationId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id       String         @id @default(cuid())
+  teamId   String
+  team     Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     TeamMemberRole @default(MEMBER)
+  joinedAt DateTime       @default(now())
+
+  @@unique([teamId, userId])
+  @@map("team_members")
+}
+
+// =============================================================================
+// COMPANIES & CONTACTS
+// =============================================================================
+
+model Company {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name     String
+  industry String?
+  website  String?
+  email    String?
+  phone    String?
+  address  String?
+  city     String?
+  country  String?
+  status   CompanyStatus @default(PROSPECT)
+
+  ownerId String?
+  owner   User?   @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  contacts       Contact[]
+  jobs           Job[]
+  activities     Activity[]
+  tasks          Task[]
+  calendarEvents CalendarEvent[]
+  emailThreads   EmailThread[]
+  documents      Document[]
+  comments       Comment[]
+  placements     Placement[]
+  retainers      Retainer[]
+
+  @@index([organisationId])
+  @@index([organisationId, status])
+  @@index([ownerId])
+  @@map("companies")
+}
+
+model Contact {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  firstName String
+  lastName  String
+  email     String?
+  phone     String?
+  jobTitle  String?
+  status    ContactStatus @default(ACTIVE)
+
+  ownerId String?
+  owner   User?   @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  activities              Activity[]
+  tasks                   Task[]
+  calendarEvents          CalendarEvent[]
+  emailThreads            EmailThread[]
+  documents               Document[]
+  comments                Comment[]
+  distributionListMembers DistributionListMember[]
+
+  @@index([organisationId])
+  @@index([companyId])
+  @@index([ownerId])
+  @@map("contacts")
+}
+
+// =============================================================================
+// CANDIDATES
+// =============================================================================
+
+model Candidate {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  firstName      String
+  lastName       String
+  email          String?
+  phone          String?
+  location       String?
+  jobTitle       String?
+  currentCompany String?
+  source         String?
+  avatarUrl      String?
+  status         CandidateStatus @default(ACTIVE)
+
+  ownerId String?
+  owner   User?   @relation("CandidateOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  applications      Application[]
+  documents         CandidateDocument[]
+  activities        Activity[]
+  tasks             Task[]
+  calendarEvents    CalendarEvent[]
+  candidateTags     CandidateTag[]
+  talentPoolMembers TalentPoolMember[]
+  placements        Placement[]
+  emailThreads      EmailThread[]
+  comments          Comment[]
+
+  @@index([organisationId])
+  @@index([organisationId, status])
+  @@index([organisationId, email])
+  @@index([ownerId])
+  @@map("candidates")
+}
+
+// PostgreSQL stores metadata only — the file itself lives in S3-compatible
+// object storage behind packages/storage's StorageProvider abstraction.
+// `fileUrl` holds the storage key/path resolved through that abstraction,
+// not a public URL.
+model CandidateDocument {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  name     String
+  type     DocumentType @default(CV)
+  fileUrl  String
+  fileSize Int
+
+  uploadedById String?
+  uploadedBy   User?   @relation("CandidateDocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId])
+  @@index([candidateId])
+  @@map("candidate_documents")
+}
+
+// The one deliberate polymorphic-adjacent exception in this schema: tagging
+// is a single, identical capability (attach a label) that four unrelated
+// entities need. Four near-duplicate join tables (CandidateTag, CompanyTag,
+// ContactTag, JobTag) would be pure boilerplate with zero behavioral
+// difference between them. Phase 1 implements CandidateTag only (the case
+// actually needed now); Tag itself is generic so CompanyTag/ContactTag/
+// JobTag can be added later as plain, ordinary join tables — see
+// docs/decisions for the full reasoning.
+model Tag {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name      String
+  createdAt DateTime @default(now())
+
+  candidateTags CandidateTag[]
+
+  @@unique([organisationId, name])
+  @@index([organisationId])
+  @@map("tags")
+}
+
+model CandidateTag {
+  id          String    @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  tagId       String
+  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  taggedById String?
+  taggedBy   User?   @relation("CandidateTagTaggedBy", fields: [taggedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([candidateId, tagId])
+  @@map("candidate_tags")
+}
+
+// =============================================================================
+// JOBS
+// =============================================================================
+
+model Job {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  title          String
+  description    String?
+  location       String?
+  employmentType EmploymentType @default(PERMANENT)
+  salaryMin      Decimal?       @db.Decimal(12, 2)
+  salaryMax      Decimal?       @db.Decimal(12, 2)
+  currency       String         @default("USD")
+  status         JobStatus      @default(OPEN)
+
+  ownerId String?
+  owner   User?   @relation("JobOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  openedAt  DateTime  @default(now())
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  applications   Application[]
+  activities     Activity[]
+  tasks          Task[]
+  calendarEvents CalendarEvent[]
+  documents      Document[]
+  comments       Comment[]
+  placements     Placement[]
+
+  @@index([organisationId])
+  @@index([organisationId, status])
+  @@index([companyId])
+  @@index([ownerId])
+  @@map("jobs")
+}
+
+// =============================================================================
+// ATS PIPELINE: CANDIDATE -> APPLICATION -> JOB
+// =============================================================================
+
+// Pipelines and stages are organisation-configurable. Never hard-code stage
+// names/order in application code — always resolve via PipelineStage.
+model Pipeline {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  stages       PipelineStage[]
+  applications Application[]
+
+  @@index([organisationId])
+  @@map("pipelines")
+}
+
+model PipelineStage {
+  id         String   @id @default(cuid())
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+
+  name      String
+  order     Int
+  type      PipelineStageType @default(STANDARD)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  applications Application[]
+
+  @@unique([pipelineId, order])
+  @@map("pipeline_stages")
+}
+
+// THE most important relationship in the ATS: a Candidate is never linked
+// to a Job directly. Application is the join, and it carries its own
+// pipeline/stage/status so the same candidate can be at different stages
+// of different jobs' recruitment processes at the same time.
+model Application {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  jobId String
+  job   Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  pipelineId String
+  pipeline   Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Restrict)
+
+  pipelineStageId String
+  pipelineStage   PipelineStage @relation(fields: [pipelineStageId], references: [id], onDelete: Restrict)
+
+  status ApplicationStatus @default(ACTIVE)
+  source ApplicationSource @default(OTHER)
+
+  ownerId String?
+  owner   User?   @relation("ApplicationOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  appliedAt DateTime  @default(now())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  activities     Activity[]
+  tasks          Task[]
+  calendarEvents CalendarEvent[]
+  interviews     Interview[]
+  documents      Document[]
+  comments       Comment[]
+
+  @@unique([candidateId, jobId])
+  @@index([organisationId])
+  @@index([organisationId, status])
+  @@index([jobId])
+  @@index([pipelineStageId])
+  @@index([ownerId])
+  @@map("applications")
+}
+
+// =============================================================================
+// ACTIVITY, TASKS, CALENDAR, INTERVIEWS
+// =============================================================================
+
+// Single unified activity log. All activity kinds (calls, emails, meetings,
+// status changes, etc.) live here rather than in per-type tables — see
+// docs/architecture/overview.md#activity-system. An activity can be planned
+// ahead (scheduledAt) and later marked done (completedAt).
+model Activity {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  type        ActivityType
+  subject     String?
+  description String?
+  scheduledAt DateTime?
+  completedAt DateTime?
+
+  userId String
+  user   User   @relation("ActivityUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  candidateId   String?
+  candidate     Candidate?   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  jobId         String?
+  job           Job?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId])
+  @@index([candidateId])
+  @@index([companyId])
+  @@index([contactId])
+  @@index([jobId])
+  @@index([applicationId])
+  @@index([organisationId, createdAt])
+  @@map("activities")
+}
+
+model Task {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  dueDate     DateTime?
+
+  assignedToId String
+  assignedTo   User   @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
+  createdById  String
+  createdBy    User   @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  candidateId   String?
+  candidate     Candidate?   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  jobId         String?
+  job           Job?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@index([assignedToId, status])
+  @@map("tasks")
+}
+
+model CalendarEvent {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  title      String
+  type       CalendarEventType   @default(MEETING)
+  startAt    DateTime
+  endAt      DateTime
+  location   String?
+  meetingUrl String?
+  status     CalendarEventStatus @default(SCHEDULED)
+
+  userId String
+  user   User   @relation("CalendarEventOwner", fields: [userId], references: [id], onDelete: Restrict)
+
+  candidateId   String?
+  candidate     Candidate?   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  jobId         String?
+  job           Job?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@index([organisationId, startAt])
+  @@map("calendar_events")
+}
+
+model Interview {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  scheduledAt DateTime
+  duration    Int             @default(60) // minutes
+  location    String?
+  meetingUrl  String?
+  status      InterviewStatus @default(SCHEDULED)
+  notes       String?
+
+  interviewerId String?
+  interviewer   User?   @relation("InterviewInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@index([applicationId])
+  @@map("interviews")
+}
+
+// =============================================================================
+// EMAIL
+// =============================================================================
+
+model EmailThread {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  subject String
+
+  candidateId String?
+  candidate   Candidate? @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  contactId   String?
+  contact     Contact?   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company?   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages EmailMessage[]
+
+  @@index([organisationId])
+  @@index([candidateId])
+  @@index([contactId])
+  @@map("email_threads")
+}
+
+// Email send/receive infrastructure is abstracted behind apps/worker's email
+// processor — this table never assumes a specific provider (SMTP/SES/
+// Gmail API/...). `status` tracks this row's own lifecycle (DRAFT -> SENT,
+// or FAILED), not the provider's delivery status.
+model EmailMessage {
+  id       String      @id @default(cuid())
+  threadId String
+  thread   EmailThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  from    String
+  to      String
+  cc      String?
+  subject String
+  body    String
+  status  EmailMessageStatus @default(DRAFT)
+
+  sentAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([threadId])
+  @@map("email_messages")
+}
+
+// =============================================================================
+// DOCUMENTS & COMMENTS
+// =============================================================================
+
+// Generic files not tied to a candidate (contracts, offer letters, company
+// files, job attachments). Explicit nullable FKs per related entity — same
+// pattern as Comment below — rather than a polymorphic entityType/entityId
+// pair, since the set of possible parents is small and fixed.
+model Document {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name     String
+  type     DocumentType @default(OTHER)
+  fileUrl  String
+  fileSize Int
+
+  uploadedById String?
+  uploadedBy   User?   @relation("DocumentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  jobId         String?
+  job           Job?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@map("documents")
+}
+
+// Same reusable comment/note architecture across every entity that needs
+// it — explicit nullable FKs, exactly like Document/Activity/Task above.
+model Comment {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  body String
+
+  authorId String
+  author   User   @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  candidateId   String?
+  candidate     Candidate?   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  companyId     String?
+  company       Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contactId     String?
+  contact       Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  jobId         String?
+  job           Job?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@map("comments")
+}
+
+// =============================================================================
+// TALENT POOLS & DISTRIBUTION LISTS
+// =============================================================================
+
+model TalentPool {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  ownerId String?
+  owner   User?   @relation("TalentPoolOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members TalentPoolMember[]
+
+  @@index([organisationId])
+  @@map("talent_pools")
+}
+
+model TalentPoolMember {
+  id           String     @id @default(cuid())
+  talentPoolId String
+  talentPool   TalentPool @relation(fields: [talentPoolId], references: [id], onDelete: Cascade)
+  candidateId  String
+  candidate    Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  addedById String?
+  addedBy   User?   @relation("TalentPoolMemberAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  addedAt   DateTime @default(now())
+
+  @@unique([talentPoolId, candidateId])
+  @@map("talent_pool_members")
+}
+
+model DistributionList {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+
+  ownerId String?
+  owner   User?   @relation("DistributionListOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members DistributionListMember[]
+
+  @@index([organisationId])
+  @@map("distribution_lists")
+}
+
+model DistributionListMember {
+  id                 String           @id @default(cuid())
+  distributionListId String
+  distributionList   DistributionList @relation(fields: [distributionListId], references: [id], onDelete: Cascade)
+  contactId          String
+  contact            Contact          @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  addedById String?
+  addedBy   User?   @relation("DistributionListMemberAddedBy", fields: [addedById], references: [id], onDelete: SetNull)
+  addedAt   DateTime @default(now())
+
+  @@unique([distributionListId, contactId])
+  @@map("distribution_list_members")
+}
+
+// =============================================================================
+// PLACEMENTS, FEES, RETAINERS, RENEWALS (revenue)
+// =============================================================================
+
+// A successful recruitment: Candidate + Job + Company, always. Fee(s)
+// against a Placement are how recruitment revenue is tracked.
+model Placement {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Restrict)
+  jobId       String
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  startDate DateTime
+  endDate   DateTime?
+  status    PlacementStatus @default(ACTIVE)
+
+  ownerId String?
+  owner   User?   @relation("PlacementOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fees Fee[]
+
+  @@index([organisationId])
+  @@index([candidateId])
+  @@index([jobId])
+  @@index([companyId])
+  @@map("placements")
+}
+
+model Fee {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  placementId String
+  placement   Placement @relation(fields: [placementId], references: [id], onDelete: Cascade)
+
+  amount   Decimal   @db.Decimal(12, 2)
+  currency String    @default("USD")
+  status   FeeStatus @default(PENDING)
+  dueDate  DateTime?
+  paidAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@index([placementId])
+  @@map("fees")
+}
+
+model Retainer {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  amount    Decimal        @db.Decimal(12, 2)
+  currency  String         @default("USD")
+  status    RetainerStatus @default(ACTIVE)
+  startDate DateTime
+  endDate   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  renewals Renewal[]
+
+  @@index([organisationId])
+  @@index([companyId])
+  @@map("retainers")
+}
+
+model Renewal {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  retainerId String
+  retainer   Retainer @relation(fields: [retainerId], references: [id], onDelete: Cascade)
+
+  renewalDate DateTime
+  amount      Decimal       @db.Decimal(12, 2)
+  status      RenewalStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId])
+  @@index([retainerId])
+  @@map("renewals")
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+model Notification {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type    String // e.g. "TASK_ASSIGNED", "APPLICATION_STATUS_CHANGED", "INTERVIEW_SCHEDULED"
+  title   String
+  message String?
+  readAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+// =============================================================================
+// REPORTS & ANALYTICS
+// =============================================================================
+
+// Saved report definitions. Dashboard metrics themselves (new jobs,
+// placements, shortlisted, etc.) are NOT stored anywhere — they are
+// computed on demand from Jobs/Applications/Candidates/Activities/
+// Interviews/Placements. See docs/architecture/overview.md#analytics.
+model Report {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name         String
+  type         String
+  definition   Json // query/config describing the report (filters, groupings, chart type)
+  isScheduled  Boolean   @default(false)
+  scheduleCron String?
+  lastRunAt    DateTime?
+
+  createdById String?
+  createdBy   User?   @relation("ReportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@map("reports")
+}
+
+// Lightweight append-only event log feeding analytics aggregation jobs
+// (apps/worker/src/processors/analytics). Not the audit trail — see AuditLog.
+model UserEngagementEvent {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  eventType  String // e.g. "LOGIN", "VIEW_CANDIDATE", "CREATE_JOB", "MOVE_APPLICATION_STAGE"
+  entityType String?
+  entityId   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId, eventType])
+  @@index([organisationId, createdAt])
+  @@map("user_engagement_events")
+}
+
+// =============================================================================
+// AUDIT LOG
+// =============================================================================
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Free-form action string (e.g. "CREATE_CANDIDATE", "MOVE_APPLICATION",
+  // "CREATE_PLACEMENT") rather than a generic CRUD enum — some audited
+  // actions (moving an application through the pipeline) are a distinct
+  // business event, not just an UPDATE.
+  action     String
+  entityType String
+  entityId   String
+  oldValues  Json?
+  newValues  Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organisationId, entityType, entityId])
+  @@index([organisationId, createdAt])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// INTEGRATIONS
+// =============================================================================
+
+model Integration {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  provider String // e.g. "gmail", "outlook", "linkedin", "job-board-x"
+  status   IntegrationStatus @default(PENDING_SETUP)
+  config   Json?
+
+  connectedById String?
+  connectedBy   User?   @relation("IntegrationConnectedBy", fields: [connectedById], references: [id], onDelete: SetNull)
+  connectedAt   DateTime?
+  lastSyncedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organisationId, provider])
+  @@map("integrations")
+}

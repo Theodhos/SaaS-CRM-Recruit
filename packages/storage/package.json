@@ -1,0 +1,22 @@
+{
+  "name": "@crm/storage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Storage provider abstraction (S3-compatible: AWS S3, Cloudflare R2, MinIO) so application code never depends on a specific vendor SDK directly",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "eslint . --ext .ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.637.0",
+    "@aws-sdk/s3-request-presigner": "^3.637.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

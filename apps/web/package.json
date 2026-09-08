@@ -1,0 +1,44 @@
+{
+  "name": "@crm/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js frontend for the Recruitment CRM platform",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test": "jest",
+    "clean": "rimraf .next dist"
+  },
+  "dependencies": {
+    "@crm/types": "workspace:*",
+    "@crm/ui": "workspace:*",
+    "@crm/utils": "workspace:*",
+    "@crm/validation": "workspace:*",
+    "@hookform/resolvers": "^3.9.0",
+    "@tanstack/react-query": "^5.56.0",
+    "@tanstack/react-table": "^8.20.0",
+    "lucide-react": "^0.445.0",
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-hook-form": "^7.53.0",
+    "socket.io-client": "^4.7.5",
+    "zod": "^3.23.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@tanstack/react-query-devtools": "^5.56.0",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint-config-next": "^14.2.0",
+    "postcss": "^8.4.45",
+    "rimraf": "^5.0.0",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@crm/worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BullMQ background job processors (email, documents, CV parsing, notifications, analytics, reports, imports/exports, scheduled tasks)",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsup src/main.ts --format cjs --out-dir dist --clean --target node20",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "lint": "eslint . --ext .ts",
+    "type-check": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@crm/config": "workspace:*",
+    "@crm/database": "workspace:*",
+    "@crm/logger": "workspace:*",
+    "@crm/storage": "workspace:*",
+    "bullmq": "^5.12.0",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "rimraf": "^5.0.0",
+    "tsup": "^8.2.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
