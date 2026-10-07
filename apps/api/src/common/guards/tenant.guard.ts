@@ -1,7 +1,11 @@
+import { IS_PUBLIC_KEY } from '@crm/auth';
 import type { TenantContext, TokenPayload } from '@crm/auth';
 import type { ExecutionContext, NestMiddleware } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request, Response, NextFunction } from 'express';
+
+import { SEES_ALL_RECORDS_PERMISSION, setRecordOwnerScope } from '../context/request-context';
 
 /**
  * Central tenant-isolation enforcement point (see docs/architecture/multi-tenancy.md).
@@ -20,7 +24,15 @@ import type { Request, Response, NextFunction } from 'express';
  */
 @Injectable()
 export class TenantGuard {
+  constructor(private readonly reflector: Reflector) {}
+
   canActivate(context: ExecutionContext): boolean {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const request = context
       .switchToHttp()
       .getRequest<Request & { user?: TokenPayload; tenant?: TenantContext }>();
@@ -37,6 +49,10 @@ export class TenantGuard {
       role: user.role,
       permissions: user.permissions,
     };
+
+    // Admins see the whole organisation; everyone else works with their own candidates, companies and jobs
+    // (enforced in the data layer — see packages/database/src/owner-scope.ts).
+    setRecordOwnerScope(user.permissions?.includes(SEES_ALL_RECORDS_PERMISSION) ? undefined : user.sub);
 
     return true;
   }

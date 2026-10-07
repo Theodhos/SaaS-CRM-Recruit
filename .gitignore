@@ -17,12 +17,24 @@ out/
 .env.local
 .env.*.local
 !.env.example
+.env.production
+!.env.production.example
+
+# Deployment secrets and state (never commit)
+secrets/
+.deployed-tag
+infrastructure/nginx/active-color.conf.prev
 
 # Prisma
 packages/database/prisma/migrations/dev/
 packages/database/src/generated/
 *.db
 *.db-journal
+
+# Generated docs (may embed live DB snapshots)
+docs/generated/
+/schema-documentation.txt
+/variable-table-type.txt
 
 # Logs
 logs/
@@ -49,9 +61,22 @@ Thumbs.db
 # Storage / uploads (local dev only)
 infrastructure/docker/volumes/
 uploads/
+storage-uploads/
 tmp/
 
 # Misc
 .vercel
 *.tsbuildinfo
 .eslintcache
+
+# Load-test scratch output (infrastructure/loadtest)
+infrastructure/loadtest/data/
+infrastructure/loadtest/golden/
+infrastructure/loadtest/*.log
+infrastructure/loadtest/*.jsonl
+infrastructure/loadtest/ab-*.json
+infrastructure/loadtest/bench-*.json
+infrastructure/loadtest/load-*.json
+infrastructure/loadtest/explain-*.json
+infrastructure/loadtest/index-experiment.json
+infrastructure/loadtest/package-lock.json

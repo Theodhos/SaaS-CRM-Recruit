@@ -1,5 +1,5 @@
 export * from './types';
-export * from './strategies/jwt.strategy';
+export { JwtStrategy, ACCESS_TOKEN_COOKIE } from './strategies/jwt.strategy';
 export * from './guards/jwt-auth.guard';
 export * from './guards/permissions.guard';
 export * from './decorators/public.decorator';

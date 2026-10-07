@@ -1,3 +1,3 @@
-// Tasks module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreateTaskDto } from './create-task.dto';
+export { UpdateTaskDto } from './update-task.dto';
+export { ListTasksQueryDto } from './list-tasks-query.dto';

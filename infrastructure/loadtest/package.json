@@ -1,0 +1,12 @@
+{
+  "name": "crm-loadtest",
+  "private": true,
+  "description": "Standalone tooling to reproduce the performance measurements in docs/operations/performance.md. Not part of the pnpm workspace.",
+  "scripts": {
+    "pg": "node pg-server.js"
+  },
+  "dependencies": {
+    "embedded-postgres": "16.14.0-beta.17",
+    "pg": "^8.13.0"
+  }
+}

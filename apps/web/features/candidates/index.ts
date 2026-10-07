@@ -1,4 +1,3 @@
-// features/candidates — domain-specific components/hooks for the candidates feature area,
-// composed from components/* (reusable) and services/hooks (data access).
-// Intentionally empty in Phase 1.
-export {};
+export { CandidateCv, useCandidateCvs } from './candidate-cv';
+export { CandidateForm } from './candidate-form';
+export { candidateColumns, unassignedCandidateColumns } from './columns';

@@ -1,0 +1,42 @@
+# Promtail: ships container stdout to Loki. Docker's json-file logs are discovered through the Docker socket
+# (mounted read-only); containers are labelled by compose service so a query like {service="api-blue"}
+# spans every replica of that service.
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /positions/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=crm"]
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_name]
+        regex: /(.*)
+        target_label: container
+    pipeline_stages:
+      # API / worker / realtime log JSON (pino); nginx logs JSON too. Non-JSON lines pass through untouched.
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            request_id: request_id
+            req_id: req.id
+            status: res.statusCode
+      - labels:
+          level:
+      # Health probes every few seconds are noise, not signal.
+      - drop:
+          expression: '.*"uri":"/(health|health/ready|lb-health|healthz)".*'
+      - drop:
+          expression: '.*"url":"/(health|health/ready)".*'

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { EmailsRepository } from '../repositories/emails.repository';
+import { EmailsRepository } from '../repositories/emails.repository';
 
 @Injectable()
 export class EmailsService {

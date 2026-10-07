@@ -1,0 +1,134 @@
+# Monitoring, alerting and centralised logging — an overlay on docker-compose.prod.yml:
+#
+#   docker compose --env-file .env.production -f docker-compose.prod.yml -f docker-compose.observability.yml up -d
+#
+# Grafana:      http://<host>:3001   (login: admin / GRAFANA_ADMIN_PASSWORD) — bind it to localhost or put it
+#               behind your VPN / SSO; do not expose it to the internet.
+# Prometheus:   internal only. Alertmanager: internal only.
+#
+# Files you must create (git-ignored, see docs/operations/monitoring.md):
+#   secrets/metrics_token          same value as the API's METRICS_TOKEN
+#   secrets/slack_webhook_url      Slack incoming webhook for alerts
+#   secrets/grafana_admin_password
+#
+# Everything here runs on the same compose network as the app (`crm-net`) so replicas are discovered by DNS.
+
+x-obs: &obs
+  restart: unless-stopped
+  networks: [crm-net]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  prometheus:
+    <<: *obs
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./infrastructure/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./secrets/metrics_token:/etc/prometheus/secrets/metrics_token:ro
+      - prometheus_data:/prometheus
+    depends_on: [alertmanager]
+
+  alertmanager:
+    <<: *obs
+    image: prom/alertmanager:v0.27.0
+    command: [--config.file=/etc/alertmanager/alertmanager.yml, --storage.path=/alertmanager]
+    volumes:
+      - ./infrastructure/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./secrets:/etc/alertmanager/secrets:ro
+      - alertmanager_data:/alertmanager
+
+  grafana:
+    <<: *obs
+    image: grafana/grafana:11.3.0
+    ports: ["127.0.0.1:${GRAFANA_PORT:-3001}:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - ./infrastructure/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./secrets/grafana_admin_password:/run/secrets/grafana_admin_password:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [prometheus, loki]
+
+  loki:
+    <<: *obs
+    image: grafana/loki:3.2.1
+    command: [-config.file=/etc/loki/loki-config.yml]
+    volumes:
+      - ./infrastructure/observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki_data:/loki
+
+  promtail:
+    <<: *obs
+    image: grafana/promtail:3.2.1
+    command: [-config.file=/etc/promtail/promtail-config.yml]
+    volumes:
+      - ./infrastructure/observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail_positions:/positions
+    depends_on: [loki]
+
+  blackbox:
+    <<: *obs
+    image: prom/blackbox-exporter:v0.25.0
+    command: [--config.file=/etc/blackbox/blackbox.yml]
+    volumes:
+      - ./infrastructure/observability/blackbox/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+
+  redis-exporter:
+    <<: *obs
+    image: oliver006/redis_exporter:v1.66.0
+    environment: { REDIS_ADDR: "redis://redis:6379", REDIS_PASSWORD: "${REDIS_PASSWORD}" }
+
+  redis-cache-exporter:
+    <<: *obs
+    image: oliver006/redis_exporter:v1.66.0
+    environment: { REDIS_ADDR: "redis://redis-cache:6379", REDIS_PASSWORD: "${REDIS_PASSWORD}" }
+
+  postgres-exporter:
+    <<: *obs
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    # Use a dedicated read-only role in the `pg_monitor` group, e.g.
+    #   postgresql://exporter:<password>@<managed-host>:5432/postgres?sslmode=require
+    environment:
+      DATA_SOURCE_NAME: "${POSTGRES_EXPORTER_DSN:?set POSTGRES_EXPORTER_DSN (read-only monitoring role)}"
+
+  cadvisor:
+    <<: *obs
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    privileged: false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+
+  node-exporter:
+    <<: *obs
+    image: prom/node-exporter:v1.8.2
+    command:
+      - --path.rootfs=/host
+      - --collector.textfile.directory=/textfile   # picks up crm_backup_last_success_timestamp_seconds
+    volumes:
+      - /:/host:ro,rslave
+      - db_backups:/textfile:ro
+    pid: host
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:
+  loki_data:
+  promtail_positions:
+  db_backups:
+    external: false

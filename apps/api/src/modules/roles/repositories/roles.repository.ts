@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { DatabaseService } from '../../../infrastructure/database/database.service';
+import { DatabaseService } from '../../../infrastructure/database/database.service';
 
 /**
  * Tenant-scoped data access for 'roles'. Always resolve the client via
@@ -11,4 +11,15 @@ import type { DatabaseService } from '../../../infrastructure/database/database.
 @Injectable()
 export class RolesRepository {
   constructor(private readonly db: DatabaseService) {}
+
+  findMany(organisationId: string) {
+    return this.db.forTenant(organisationId).role.findMany({
+      orderBy: { name: 'asc' },
+      include: { _count: { select: { users: true } } },
+    });
+  }
+
+  findById(organisationId: string, id: string) {
+    return this.db.forTenant(organisationId).role.findFirst({ where: { id } });
+  }
 }

@@ -1,9 +1,25 @@
-import { Controller } from '@nestjs/common';
+import { CurrentTenant, Permissions } from '@crm/auth';
+import { Controller, Get } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
-/**
- * Analytics module — skeleton only (Phase 1: architecture). Endpoints land
- * in Phase 2 alongside DTOs (../dto), response entities (../entities), and
- * repository queries (../repositories) for this module.
- */
+import { PERMISSIONS } from '../../../common/constants/permissions.constants';
+import { AnalyticsService } from '../service/analytics.service';
+
+@ApiTags('analytics')
+@ApiBearerAuth()
 @Controller('analytics')
-export class AnalyticsController {}
+export class AnalyticsController {
+  constructor(private readonly analyticsService: AnalyticsService) {}
+
+  @Get('dashboard-summary')
+  @Permissions(PERMISSIONS.ANALYTICS.VIEW)
+  dashboardSummary(@CurrentTenant() organisationId: string) {
+    return this.analyticsService.dashboardSummary(organisationId);
+  }
+
+  @Get('overview')
+  @Permissions(PERMISSIONS.ANALYTICS.VIEW)
+  overview(@CurrentTenant() organisationId: string) {
+    return this.analyticsService.overview(organisationId);
+  }
+}

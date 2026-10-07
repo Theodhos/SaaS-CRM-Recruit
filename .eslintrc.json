@@ -41,6 +41,14 @@
     ],
     "import/no-unresolved": "off"
   },
+  "overrides": [
+    {
+      "files": ["apps/api/src/**/*.ts", "apps/realtime/src/**/*.ts", "packages/auth/src/**/*.ts"],
+      "rules": {
+        "@typescript-eslint/consistent-type-imports": "off"
+      }
+    }
+  ],
   "settings": {
     "import/resolver": {
       "typescript": true

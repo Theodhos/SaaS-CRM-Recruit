@@ -1,3 +1,4 @@
-// Applications module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreateApplicationDto } from './create-application.dto';
+export { UpdateApplicationDto } from './update-application.dto';
+export { ListApplicationsQueryDto } from './list-applications-query.dto';
+export { ToggleChecklistItemDto } from './toggle-checklist-item.dto';

@@ -24,6 +24,9 @@
     },
     "test": {
       "dependsOn": ["db:generate"],
+      // Turbo only forwards declared variables to tasks. Without this the Redis integration suites (rate limiter, cache,
+      // scheduler lock) silently SKIP under `pnpm test`, because they are enabled by TEST_REDIS_URL.
+      "env": ["TEST_REDIS_URL"],
       "outputs": ["coverage/**"]
     },
     "test:e2e": {

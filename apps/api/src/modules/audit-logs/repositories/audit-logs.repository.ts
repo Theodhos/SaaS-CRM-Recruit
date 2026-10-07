@@ -1,14 +1,43 @@
 import { Injectable } from '@nestjs/common';
 
-import type { DatabaseService } from '../../../infrastructure/database/database.service';
+import { DatabaseService } from '../../../infrastructure/database/database.service';
 
-/**
- * Tenant-scoped data access for 'audit-logs'. Always resolve the client via
- * `this.db.forTenant(organisationId)` (packages/database scopedPrisma) —
- * never query the raw PrismaClient for tenant-scoped models. See
- * docs/architecture/multi-tenancy.md.
- */
 @Injectable()
 export class AuditLogsRepository {
   constructor(private readonly db: DatabaseService) {}
+
+  create(input: {
+    organisationId: string;
+    userId: string | null;
+    action: string;
+    entityType: string;
+    entityId: string;
+    oldValues?: unknown;
+    newValues?: unknown;
+  }) {
+    return this.db.forTenant(input.organisationId).auditLog.create({
+      data: {
+        organisationId: input.organisationId,
+        userId: input.userId,
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        oldValues: input.oldValues as never,
+        newValues: input.newValues as never,
+      },
+    });
+  }
+
+  async findMany(organisationId: string, params: { skip: number; take: number }) {
+    const db = this.db.forTenant(organisationId);
+    const [items, totalItems] = await Promise.all([
+      db.auditLog.findMany({
+        skip: params.skip,
+        take: params.take,
+        orderBy: { createdAt: 'desc' },
+      }),
+      db.auditLog.count(),
+    ]);
+    return { items, totalItems };
+  }
 }

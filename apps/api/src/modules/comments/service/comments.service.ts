@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { CommentsRepository } from '../repositories/comments.repository';
+import { CommentsRepository } from '../repositories/comments.repository';
 
 @Injectable()
 export class CommentsService {

@@ -2,6 +2,7 @@
   "name": "@crm/utils",
   "version": "0.1.0",
   "private": true,
+  "sideEffects": false,
   "description": "Small, dependency-free shared utilities (pagination math, slugify, etc.) safe for both browser and Node",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

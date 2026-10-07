@@ -20,6 +20,8 @@ const CRUD_MODULES = [
   'placement',
   'task',
   'document',
+  'activity',
+  'calendar',
 ] as const;
 
 const crudPermissions: PermissionSeed[] = CRUD_MODULES.flatMap((module) => [
@@ -34,6 +36,10 @@ const additionalPermissions: PermissionSeed[] = [
   { key: 'analytics:view', module: 'analytics', description: 'View analytics dashboards' },
   { key: 'settings:manage', module: 'settings', description: 'Manage organisation settings' },
   { key: 'users:manage', module: 'users', description: 'Manage users, roles, and teams' },
+  // Notifications are system-generated, never authored by a user directly —
+  // no create/update permission, just read (the bell/list) and delete/dismiss.
+  { key: 'notification:read', module: 'notification', description: 'View notifications' },
+  { key: 'notification:delete', module: 'notification', description: 'Dismiss notifications' },
 ];
 
 export const permissionSeeds: PermissionSeed[] = [...crudPermissions, ...additionalPermissions];

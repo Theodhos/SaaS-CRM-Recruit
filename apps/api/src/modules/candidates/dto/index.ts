@@ -1,3 +1,3 @@
-// Candidates module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export * from './create-candidate.dto';
+export * from './update-candidate.dto';
+export * from './list-candidates-query.dto';

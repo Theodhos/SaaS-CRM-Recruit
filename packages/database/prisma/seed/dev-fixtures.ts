@@ -43,11 +43,26 @@ export async function seedDevFixtures(prisma: PrismaClient): Promise<void> {
   const recruiterRole = await prisma.role.create({
     data: {
       organisationId: organisation.id,
-      name: 'Recruiter',
-      description: 'Manages candidates, companies, contacts, jobs, and applications',
+      name: 'Instructor',
+      description: 'Works in their own book of business: the candidates, companies and jobs they add themselves',
       rolePermissions: {
         create: allPermissions
           .filter((p) => !adminOnlyKeys.has(p.key))
+          .map((p) => ({ permissionId: p.id })),
+      },
+    },
+  });
+
+  // Between Admin (everything) and Recruiter (recruiting-only): can manage
+  // the team's users but not organisation-wide settings.
+  const managerRole = await prisma.role.create({
+    data: {
+      organisationId: organisation.id,
+      name: 'Manager',
+      description: 'Recruiter permissions plus managing the organisation\'s users and teams',
+      rolePermissions: {
+        create: allPermissions
+          .filter((p) => p.key !== 'settings:manage')
           .map((p) => ({ permissionId: p.id })),
       },
     },
@@ -74,6 +89,18 @@ export async function seedDevFixtures(prisma: PrismaClient): Promise<void> {
       firstName: 'Rae',
       lastName: 'Recruiter',
       email: 'recruiter@acme-recruiting.dev',
+      passwordHash,
+      status: 'ACTIVE',
+    },
+  });
+
+  const manager = await prisma.user.create({
+    data: {
+      organisationId: organisation.id,
+      roleId: managerRole.id,
+      firstName: 'Morgan',
+      lastName: 'Manager',
+      email: 'manager@acme-recruiting.dev',
       passwordHash,
       status: 'ACTIVE',
     },
@@ -131,6 +158,23 @@ export async function seedDevFixtures(prisma: PrismaClient): Promise<void> {
       companyId: company.id,
       title: 'Senior Backend Engineer',
       description: 'Own the core services platform for a fast-growing product team.',
+      responsibilities: [
+        'Design, build and run the backend services behind the product',
+        'Review code and mentor mid-level engineers',
+        'Take part in the on-call rota and lead incident follow-ups',
+      ].join('\n'),
+      requirements: [
+        'Strong TypeScript/Node.js or a comparable backend language',
+        'Production experience with PostgreSQL and a message queue',
+        'Has designed and operated services under real load',
+      ].join('\n'),
+      experienceYearsMin: 5,
+      experienceYearsMax: 8,
+      compensationPackage: [
+        'Annual bonus up to 10% of base salary',
+        'Health, dental and vision insurance',
+        '25 days paid leave plus public holidays',
+      ].join('\n'),
       location: 'Austin, TX',
       employmentType: 'PERMANENT',
       salaryMin: 130000,
@@ -204,5 +248,6 @@ export async function seedDevFixtures(prisma: PrismaClient): Promise<void> {
   console.log('Seeded dev fixtures:');
   console.log(`  Organisation: ${organisation.name} (${organisation.slug})`);
   console.log(`  Admin login:      ${admin.email} / ${DEV_PASSWORD}`);
+  console.log(`  Manager login:    ${manager.email} / ${DEV_PASSWORD}`);
   console.log(`  Recruiter login:  ${recruiter.email} / ${DEV_PASSWORD}`);
 }

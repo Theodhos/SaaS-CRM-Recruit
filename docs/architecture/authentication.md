@@ -1,3 +1,4 @@
+3
 # Authentication
 
 Authentication lives entirely in `packages/auth` + `apps/api/src/modules/auth`

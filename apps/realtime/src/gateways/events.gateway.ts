@@ -1,6 +1,6 @@
 import type { TokenPayload } from '@crm/auth';
 import { Logger } from '@nestjs/common';
-import type { JwtService } from '@nestjs/jwt';
+import { JwtService } from '@nestjs/jwt';
 import type { OnGatewayConnection, OnGatewayDisconnect } from '@nestjs/websockets';
 import { ConnectedSocket, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';

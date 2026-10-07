@@ -1,3 +1,3 @@
-// Contacts module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export * from './create-contact.dto';
+export * from './update-contact.dto';
+export * from './list-contacts-query.dto';

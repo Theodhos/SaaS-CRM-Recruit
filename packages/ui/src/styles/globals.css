@@ -32,4 +32,42 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
   }
+
+  /* Chart palette (dataviz skill's validated reference instance) — fixed
+     categorical slot order, never cycled/reassigned per chart. Kept
+     separate from the shadcn tokens above since charts need real hex
+     (CVD-validated), not HSL triples. */
+  :root {
+    --chart-series-1: #2a78d6; /* blue */
+    --chart-series-2: #eb6834; /* orange */
+    --chart-series-3: #1baf7a; /* aqua */
+    --chart-series-4: #eda100; /* yellow */
+    --chart-series-5: #e87ba4; /* magenta */
+    --chart-series-6: #008300; /* green */
+    --chart-series-7: #4a3aa7; /* violet */
+    --chart-series-8: #e34948; /* red */
+    --chart-surface: #fcfcfb;
+    --chart-text-primary: #0b0b0b;
+    --chart-text-secondary: #52514e;
+    --chart-muted: #898781;
+    --chart-grid: #e1e0d9;
+    --chart-baseline: #c3c2b7;
+  }
+
+  .dark {
+    --chart-series-1: #3987e5;
+    --chart-series-2: #d95926;
+    --chart-series-3: #199e70;
+    --chart-series-4: #c98500;
+    --chart-series-5: #d55181;
+    --chart-series-6: #008300;
+    --chart-series-7: #9085e9;
+    --chart-series-8: #e66767;
+    --chart-surface: #1a1a19;
+    --chart-text-primary: #ffffff;
+    --chart-text-secondary: #c3c2b7;
+    --chart-muted: #898781;
+    --chart-grid: #2c2c2a;
+    --chart-baseline: #383835;
+  }
 }

@@ -1,0 +1,34 @@
+# Loki: centralised log store. Every container (all API/web/worker replicas, nginx) logs JSON to stdout;
+# Promtail ships it here, so logs from every instance are searchable in one place (Grafana -> Explore -> Loki).
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  ring:
+    kvstore: { store: inmemory }
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index: { prefix: index_, period: 24h }
+
+limits_config:
+  retention_period: 336h            # 14 days
+  ingestion_rate_mb: 16
+  max_query_length: 721h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem

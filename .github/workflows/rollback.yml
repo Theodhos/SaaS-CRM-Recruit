@@ -1,0 +1,36 @@
+name: Rollback
+
+# Manual, one click: flips the edge back to the previous colour (instant — its containers still exist).
+# Use it when a release passed the smoke tests but misbehaves in production.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to roll back
+        type: choice
+        options: [staging, production]
+        default: production
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: SSH setup
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Roll back
+        run: |
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes "${{ vars.DEPLOY_USER }}@${{ vars.DEPLOY_HOST }}" \
+            "cd '${{ vars.DEPLOY_PATH }}' && ./infrastructure/scripts/rollback.sh"

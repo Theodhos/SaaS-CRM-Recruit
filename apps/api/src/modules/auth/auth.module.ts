@@ -4,9 +4,15 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 
+import { SupabaseAuthService } from '../../infrastructure/supabase/supabase-auth.service';
+import { AuditLogsModule } from '../audit-logs/audit-logs.module';
+
 import { AuthController } from './controller/auth.controller';
 import { AuthRepository } from './repositories/auth.repository';
+import { LoginChallengesRepository } from './repositories/login-challenges.repository';
 import { AuthService } from './service/auth.service';
+import { LoginOtpService } from './service/login-otp.service';
+import { PasswordResetService } from './service/password-reset.service';
 
 /**
  * Authentication is deliberately isolated in its own module rather than
@@ -16,6 +22,7 @@ import { AuthService } from './service/auth.service';
  */
 @Module({
   imports: [
+    AuditLogsModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       inject: [ConfigService],
@@ -29,6 +36,10 @@ import { AuthService } from './service/auth.service';
   providers: [
     AuthService,
     AuthRepository,
+    LoginOtpService,
+    SupabaseAuthService,
+    PasswordResetService,
+    LoginChallengesRepository,
     {
       provide: JwtStrategy,
       useFactory: (config: ConfigService) =>

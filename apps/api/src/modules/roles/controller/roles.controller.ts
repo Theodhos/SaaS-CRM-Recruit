@@ -1,9 +1,17 @@
-import { Controller } from '@nestjs/common';
+import { CurrentTenant } from '@crm/auth';
+import { Controller, Get } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
-/**
- * Roles module — skeleton only (Phase 1: architecture). Endpoints land
- * in Phase 2 alongside DTOs (../dto), response entities (../entities), and
- * repository queries (../repositories) for this module.
- */
+import { RolesService } from '../service/roles.service';
+
+@ApiTags('roles')
+@ApiBearerAuth()
 @Controller('roles')
-export class RolesController {}
+export class RolesController {
+  constructor(private readonly rolesService: RolesService) {}
+
+  @Get()
+  list(@CurrentTenant() organisationId: string) {
+    return this.rolesService.list(organisationId);
+  }
+}

@@ -1,3 +1,3 @@
-// Placements module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreatePlacementDto } from './create-placement.dto';
+export { UpdatePlacementDto } from './update-placement.dto';
+export { ListPlacementsQueryDto } from './list-placements-query.dto';

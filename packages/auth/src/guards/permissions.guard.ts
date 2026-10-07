@@ -1,6 +1,6 @@
 import type { ExecutionContext } from '@nestjs/common';
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import type { Reflector } from '@nestjs/core';
+import { Reflector } from '@nestjs/core';
 
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 import type { TokenPayload } from '../types';

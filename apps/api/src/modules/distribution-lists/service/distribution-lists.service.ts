@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { DistributionListsRepository } from '../repositories/distribution-lists.repository';
+import { DistributionListsRepository } from '../repositories/distribution-lists.repository';
 
 @Injectable()
 export class DistributionListsService {

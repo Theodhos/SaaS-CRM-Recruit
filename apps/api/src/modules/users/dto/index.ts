@@ -1,3 +1,3 @@
-// Users module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreateUserDto } from './create-user.dto';
+export { UpdateUserDto } from './update-user.dto';
+export { ListUsersQueryDto } from './list-users-query.dto';

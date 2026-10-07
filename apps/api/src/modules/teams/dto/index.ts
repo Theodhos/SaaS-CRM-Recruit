@@ -1,3 +1,4 @@
-// Teams module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreateTeamDto } from './create-team.dto';
+export { UpdateTeamDto } from './update-team.dto';
+export { AddTeamMemberDto, UpdateTeamMemberDto } from './add-team-member.dto';
+export { ListTeamsQueryDto } from './list-teams-query.dto';

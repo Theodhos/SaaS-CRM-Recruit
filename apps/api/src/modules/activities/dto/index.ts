@@ -1,3 +1,3 @@
-// Activities module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreateActivityDto } from './create-activity.dto';
+export { UpdateActivityDto } from './update-activity.dto';
+export { ListActivitiesQueryDto } from './list-activities-query.dto';

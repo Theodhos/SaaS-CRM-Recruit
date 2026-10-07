@@ -1,0 +1,270 @@
+# Production topology for a single host or any compose-capable runtime. Kubernetes is intentionally NOT used:
+# it is an option once you outgrow this (see docs/operations/scaling.md), not a starting requirement.
+#
+#   Internet -> Cloudflare/CDN -> edge (nginx) -+-> web-<color>   (Next.js, N replicas)
+#                                               +-> api-<color>   (NestJS, N replicas, stateless)
+#                                               +-> realtime      (Socket.IO)
+#   api / worker -> redis (queues, noeviction)  +  redis-cache (cache + rate-limit counters, LRU)
+#   api / worker -> PostgreSQL (managed in production; `local-db` profile for staging / single host)
+#   worker  -> BullMQ processors: CV parsing, e-mail, imports/exports, reports ... (scale independently)
+#
+# Zero-downtime releases use two colours (blue/green). Both colours are defined here; only one is "active"
+# (see infrastructure/nginx/active-color.conf). `infrastructure/scripts/deploy.sh` starts the idle colour,
+# health-checks it, flips the edge, then retires the old colour; `rollback.sh` flips back.
+#
+#   cp .env.production.example .env.production      # then fill in real values (NEVER commit it)
+#   docker compose -f docker-compose.prod.yml --profile blue up -d --wait
+#
+# Profiles:  blue | green | local-db | migrate | observability (see docker-compose.observability.yml)
+
+name: crm
+
+x-service: &service
+  restart: unless-stopped
+  env_file: .env.production
+  networks: [crm-net]
+  stop_grace_period: 30s          # lets Nest / BullMQ finish in-flight work on SIGTERM
+  init: false                     # images already run tini
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+x-api: &api
+  <<: *service
+  build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile }
+  environment: &api-env
+    NODE_ENV: production
+    API_HOST: 0.0.0.0
+    API_PORT: "4000"              # pinned: the root .env used in development sets API_PORT to another value
+    TRUST_PROXY: "1"              # exactly one proxy hop (the edge) in front of the API
+  depends_on:
+    redis: { condition: service_healthy }
+    redis-cache: { condition: service_healthy }
+  deploy:
+    replicas: ${API_REPLICAS:-2}
+    resources:
+      limits: { cpus: "2", memory: 2g }
+      reservations: { cpus: "0.5", memory: 512m }
+
+x-web: &web
+  <<: *service
+  build:
+    context: .
+    dockerfile: infrastructure/docker/web.Dockerfile
+    args:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL (browser-visible API URL, inlined at build time)}
+      NEXT_PUBLIC_REALTIME_URL: ${NEXT_PUBLIC_REALTIME_URL:-}
+  environment: { NODE_ENV: production, PORT: "3000", HOSTNAME: 0.0.0.0 }
+  # Root filesystem is read-only; Next may write its build cache at runtime, so give it scratch space.
+  tmpfs: [/tmp, /repo/apps/web/.next/cache]
+  deploy:
+    replicas: ${WEB_REPLICAS:-2}
+    resources:
+      limits: { cpus: "1", memory: 1g }
+
+services:
+  # ------------------------------------------------------------------ edge / load balancer
+  edge:
+    image: nginxinc/nginx-unprivileged:1.27-alpine
+    restart: unless-stopped
+    ports: ["${EDGE_PORT:-80}:8080"]
+    volumes:
+      - ./infrastructure/nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/cloudflare-ips.conf:/etc/nginx/cloudflare-ips.conf:ro
+      - ./infrastructure/nginx/active-color.conf:/etc/nginx/active-color.conf:ro
+    tmpfs: [/tmp]
+    read_only: true
+    networks: [crm-net]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/lb-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging: { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+
+  # ------------------------------------------------------------------ application tier (blue / green)
+  api-blue:
+    <<: *api
+    image: ${REGISTRY:-crm}/api:${BLUE_TAG:-latest}
+    profiles: ["blue"]
+  api-green:
+    <<: *api
+    image: ${REGISTRY:-crm}/api:${GREEN_TAG:-latest}
+    profiles: ["green"]
+
+  web-blue:
+    <<: *web
+    image: ${REGISTRY:-crm}/web:${BLUE_TAG:-latest}
+    profiles: ["blue"]
+  web-green:
+    <<: *web
+    image: ${REGISTRY:-crm}/web:${GREEN_TAG:-latest}
+    profiles: ["green"]
+
+  # ------------------------------------------------------------------ background processing
+  # Workers are not user-facing, so they are replaced in place (BullMQ hands unfinished jobs to the next
+  # worker). Scale by queue depth:  docker compose ... up -d --scale worker=4
+  worker:
+    <<: *service
+    image: ${REGISTRY:-crm}/worker:${WORKER_TAG:-latest}
+    build: { context: ., dockerfile: infrastructure/docker/worker.Dockerfile }
+    environment: { NODE_ENV: production }
+    depends_on:
+      redis: { condition: service_healthy }
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+      resources:
+        limits: { cpus: "2", memory: 2g }
+
+  realtime:
+    <<: *service
+    image: ${REGISTRY:-crm}/realtime:${WORKER_TAG:-latest}
+    build: { context: ., dockerfile: infrastructure/docker/realtime.Dockerfile }
+    environment: { NODE_ENV: production, REALTIME_PORT: "4001" }
+    depends_on:
+      redis: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m }
+
+  # ------------------------------------------------------------------ Redis
+  # Two instances on purpose. BullMQ requires `maxmemory-policy noeviction` (an evicted job is a lost job),
+  # while a cache wants LRU eviction. One policy cannot serve both safely.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - noeviction
+    volumes: [redis_data:/data]
+    networks: [crm-net]
+    environment: { REDISCLI_AUTH: "${REDIS_PASSWORD}" }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - ${REDIS_CACHE_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - allkeys-lru
+    networks: [crm-net]
+    environment: { REDISCLI_AUTH: "${REDIS_PASSWORD}" }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ------------------------------------------------------------------ PostgreSQL
+  # Production should use a MANAGED PostgreSQL (backups, PITR, replication, patching). This container exists
+  # for staging and single-host installs. The flags turn on the visibility the runbooks rely on.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["local-db"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-recruitment_crm}
+      POSTGRES_USER: ${POSTGRES_USER:-crm_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_min_duration_statement=500      # slow-query log (ms)
+      - -c
+      - log_lock_waits=on
+      - -c
+      - log_temp_files=10MB
+      - -c
+      - track_io_timing=on
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-3GB}
+      - -c
+      - random_page_cost=1.1               # SSD storage
+      - -c
+      - autovacuum_vacuum_scale_factor=0.05
+      - -c
+      - autovacuum_analyze_scale_factor=0.02
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [crm-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    shm_size: 256mb
+
+  # Nightly logical backup with retention, next to the database. Off-site copy + tested restores:
+  # docs/operations/backup-and-recovery.md
+  db-backup:
+    image: postgres:16-alpine
+    profiles: ["local-db"]
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-crm_user}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:-recruitment_crm}
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - ./infrastructure/scripts/backup-postgres.sh:/usr/local/bin/backup-postgres.sh:ro
+      - db_backups:/backups
+    entrypoint: ["/bin/sh", "-c", "while true; do /usr/local/bin/backup-postgres.sh || echo 'backup FAILED' >&2; sleep ${BACKUP_INTERVAL_SECONDS:-86400}; done"]
+    networks: [crm-net]
+
+  # One-shot: apply Prisma migrations before switching traffic (expand-only; see docs/operations/deployment.md).
+  #   docker compose -f docker-compose.prod.yml --profile migrate run --rm migrate
+  migrate:
+    image: ${REGISTRY:-crm}/migrate:${MIGRATE_TAG:-latest}
+    profiles: ["migrate"]
+    build: { context: ., dockerfile: infrastructure/docker/api.Dockerfile, target: migrate }
+    env_file: .env.production
+    # Migrations run as a DDL-capable role on a DIRECT (non-pooled) connection — never through the app's pooler
+    # (transaction-mode poolers break Prisma migrate) and never with the app's DML-only role.
+    environment:
+      DATABASE_URL: ${DIRECT_DATABASE_URL:?set DIRECT_DATABASE_URL (DDL role, direct connection)}
+    networks: [crm-net]
+    restart: "no"
+
+networks:
+  crm-net:
+    driver: bridge
+
+volumes:
+  redis_data:
+  postgres_data:
+  db_backups:

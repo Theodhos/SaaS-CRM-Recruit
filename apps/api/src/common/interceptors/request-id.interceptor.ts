@@ -15,7 +15,10 @@ export class RequestIdInterceptor implements NestInterceptor {
     const request = context.switchToHttp().getRequest();
     const response = context.switchToHttp().getResponse();
 
-    const requestId: string = request.headers['x-request-id'] ?? uuidv4();
+    // pino-http already minted the id (before any guard ran, and honouring an id set by the edge), so reuse it:
+    // the id in the logs, the X-Request-Id header and the response envelope are then one and the same.
+    const requestId: string =
+      typeof request.id === 'string' && request.id.length > 0 ? request.id : (request.headers['x-request-id'] ?? uuidv4());
     request.id = requestId;
     response.setHeader('X-Request-Id', requestId);
 

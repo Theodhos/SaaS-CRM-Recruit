@@ -21,4 +21,6 @@ export interface Candidate extends TenantScopedEntity, SoftDeletableEntity {
   avatarUrl: string | null;
   status: CandidateStatus;
   ownerId: string | null;
+  companyId: string | null;
+  interestedJobId: string | null;
 }

@@ -1,0 +1,1 @@
+export { rejectedApplicantColumns } from './columns';

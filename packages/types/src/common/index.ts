@@ -10,22 +10,48 @@
 
 export type CandidateStatus = 'ACTIVE' | 'PASSIVE' | 'DO_NOT_CONTACT' | 'PLACED' | 'ARCHIVED';
 
-export type JobStatus = 'DRAFT' | 'OPEN' | 'ON_HOLD' | 'FILLED' | 'CANCELLED' | 'CLOSED';
+export type CompanyStatus = 'PROSPECT' | 'ACTIVE_CLIENT' | 'FORMER_CLIENT' | 'INACTIVE';
+
+export type CompanyPipelineStage = 'NEW' | 'IN_CONVERSATION' | 'WIN' | 'LOST';
+
+export type ContactStatus ='ACTIVE' | 'INACTIVE';
+
+export type EmploymentType = 'PERMANENT' | 'CONTRACT' | 'TEMPORARY' | 'PART_TIME';
+
+export type JobStatus = 'OPEN' | 'ON_HOLD' | 'CLOSED';
+
+export type PipelineStageType = 'STANDARD' | 'PLACED' | 'REJECTED';
 
 export type ApplicationStatus = 'ACTIVE' | 'ON_HOLD' | 'REJECTED' | 'WITHDRAWN' | 'PLACED';
+
+export type ApplicationSource =
+  | 'SOURCED'
+  | 'INBOUND'
+  | 'REFERRAL'
+  | 'JOB_BOARD'
+  | 'AGENCY'
+  | 'CAREER_SITE'
+  | 'OTHER';
 
 export type ActivityType =
   | 'CALL'
   | 'EMAIL'
   | 'MEETING'
   | 'INTERVIEW'
-  | 'TASK'
   | 'NOTE'
-  | 'STATUS_CHANGE'
-  | 'DOCUMENT'
-  | 'PLACEMENT'
-  | 'FOLLOW_UP';
+  | 'FOLLOW_UP'
+  | 'STATUS_CHANGE';
 
-export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type TaskStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
 
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
+
+export type UserStatus = 'ACTIVE' | 'INVITED' | 'SUSPENDED' | 'DEACTIVATED';
+
+export type PlacementStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
+
+export type DocumentType = 'CV' | 'RESUME' | 'COVER_LETTER' | 'CONTRACT' | 'OFFER_LETTER' | 'OTHER';
+
+export type CalendarEventType = 'MEETING' | 'INTERVIEW' | 'CALL';
+
+export type CalendarEventStatus = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED';

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { RenewalsRepository } from '../repositories/renewals.repository';
+import { RenewalsRepository } from '../repositories/renewals.repository';
 
 @Injectable()
 export class RenewalsService {

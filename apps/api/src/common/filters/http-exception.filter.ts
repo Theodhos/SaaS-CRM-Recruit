@@ -22,9 +22,24 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const status =
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
     const code = exception instanceof AppException ? exception.code : this.defaultCodeFor(status);
+    // class-validator (ValidationPipe) puts the real reasons in `response.message[]`; surface them instead of the generic
+    // "Bad Request Exception" so a form can tell the user which field is wrong.
+    const validationMessages =
+      exception instanceof HttpException && typeof exception.getResponse() === 'object'
+        ? (exception.getResponse() as { message?: unknown }).message
+        : undefined;
     const message =
-      exception instanceof HttpException ? exception.message : 'Internal server error';
-    const details = exception instanceof AppException ? exception.details : undefined;
+      Array.isArray(validationMessages) && validationMessages.length > 0
+        ? validationMessages.join('; ')
+        : exception instanceof HttpException
+          ? exception.message
+          : 'Internal server error';
+    const details =
+      exception instanceof AppException
+        ? exception.details
+        : Array.isArray(validationMessages)
+          ? { validation: validationMessages }
+          : undefined;
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(

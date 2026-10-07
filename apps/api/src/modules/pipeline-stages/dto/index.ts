@@ -1,3 +1,4 @@
-// PipelineStages module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { CreatePipelineStageDto } from './create-pipeline-stage.dto';
+export { UpdatePipelineStageDto } from './update-pipeline-stage.dto';
+export { CreateChecklistItemDto } from './create-checklist-item.dto';
+export { UpdateChecklistItemDto } from './update-checklist-item.dto';

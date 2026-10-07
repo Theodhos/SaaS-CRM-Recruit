@@ -1,3 +1,5 @@
-// Auth module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export * from './register.dto';
+export * from './login.dto';
+export * from './verify-otp.dto';
+export * from './password-reset.dto';
+export * from './account.dto';

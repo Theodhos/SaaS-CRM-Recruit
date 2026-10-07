@@ -1,0 +1,152 @@
+name: CI
+
+# Every push and pull request: lint -> typecheck -> test -> build, plus security scans and a Docker build.
+# Nothing here deploys; see deploy.yml (staging on main, production on a version tag).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  # Prisma validates DATABASE_URL's shape when generating; no connection is made in these jobs.
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=recruitment_crm
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: ci }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci" --health-interval 5s --health-timeout 5s --health-retries 10
+      # The rate limiter, cache and scheduler-lock suites run against a REAL Redis (mocks would not prove the Lua scripts
+      # or the NX locks); without TEST_REDIS_URL they are skipped.
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Prisma client + schema validation
+        run: |
+          pnpm --filter @crm/database db:generate
+          pnpm --filter @crm/database exec prisma validate
+      - name: Migrations apply cleanly on an empty database
+        run: pnpm --filter @crm/database db:migrate:deploy
+      - run: pnpm lint
+      - run: pnpm type-check
+      - name: Unit + Redis integration tests
+        run: pnpm test
+        env:
+          TEST_REDIS_URL: redis://localhost:6379
+      - run: pnpm build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:4000/api/v1
+          NEXT_PUBLIC_REALTIME_URL: http://localhost:4001
+      - name: Bundles start (module resolution)
+        # Catches the class of bug where a bundled entrypoint requires a package it cannot resolve at
+        # runtime. Each process is allowed to fail on connecting to its backing services, but never with
+        # MODULE_NOT_FOUND / ERR_MODULE_NOT_FOUND.
+        run: node infrastructure/scripts/check-bundles.mjs
+
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.12.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - name: Dependency audit (fails on high/critical in production dependencies)
+        run: pnpm audit --prod --audit-level=high
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - name: Filesystem / IaC scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  docker:
+    name: Docker image (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [verify]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [api, web, worker, realtime]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
+      - id: meta
+        run: |
+          echo "repo=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/${{ matrix.image }}.Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: |
+            ${{ steps.meta.outputs.repo }}/${{ matrix.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.repo }}/${{ matrix.image }}:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1' }}
+            NEXT_PUBLIC_REALTIME_URL=${{ vars.NEXT_PUBLIC_REALTIME_URL || '' }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+      - name: Migration image (api only)
+        if: matrix.image == 'api' && github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infrastructure/docker/api.Dockerfile
+          target: migrate
+          push: true
+          tags: ${{ steps.meta.outputs.repo }}/migrate:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=api
+      - name: Scan image
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.repo }}/${{ matrix.image }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

@@ -2,6 +2,7 @@
   "name": "@crm/validation",
   "version": "0.1.0",
   "private": true,
+  "sideEffects": false,
   "description": "Shared Zod schemas used by apps/web (React Hook Form) and apps/api (input validation)",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

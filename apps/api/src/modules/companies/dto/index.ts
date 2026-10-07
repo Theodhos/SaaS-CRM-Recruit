@@ -1,3 +1,4 @@
-// Companies module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+export { SaveCompanyPipelineRecordDto } from './pipeline-record.dto';
+export * from './create-company.dto';
+export * from './update-company.dto';
+export * from './list-companies-query.dto';

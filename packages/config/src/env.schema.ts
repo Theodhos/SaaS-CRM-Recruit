@@ -6,6 +6,19 @@ import { z } from 'zod';
  * so misconfiguration fails fast with a readable error instead of silently
  * producing `undefined` deep inside a service.
  */
+
+/**
+ * `z.coerce.boolean()` runs `Boolean(value)` under the hood, so the string
+ * "false" (non-empty) coerces to `true` — every boolean env var silently
+ * became `true` regardless of its actual value. Parse the string instead.
+ */
+function booleanEnv(defaultValue: boolean) {
+  return z.preprocess(
+    (val) => (typeof val === 'string' ? val === 'true' : val),
+    z.boolean().default(defaultValue),
+  );
+}
+
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
@@ -28,6 +41,15 @@ export const envSchema = z.object({
   // Database
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   DATABASE_POOL_URL: z.string().optional(),
+  DIRECT_DATABASE_URL: z.string().optional(),
+
+  // Supabase (not consumed by application code yet — kept for future
+  // Supabase Auth/API integration; validated here so a typo or missing
+  // value fails fast at boot instead of surfacing as `undefined` later)
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
+  SUPABASE_SECRET_KEY: z.string().optional(),
+  SUPABASE_JWKS_URL: z.string().url().optional(),
 
   // Redis
   REDIS_HOST: z.string().default('localhost'),
@@ -42,19 +64,23 @@ export const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default('7d'),
   SESSION_SECRET: z.string().min(16, 'SESSION_SECRET must be at least 16 characters'),
   COOKIE_DOMAIN: z.string().default('localhost'),
-  COOKIE_SECURE: z.coerce.boolean().default(false),
+  COOKIE_SECURE: booleanEnv(false),
   PASSWORD_SALT_ROUNDS: z.coerce.number().default(12),
 
   // Storage
-  STORAGE_PROVIDER: z.enum(['s3', 'r2', 'minio']).default('s3'),
+  STORAGE_PROVIDER: z.enum(['s3', 'r2', 'minio', 'local']).default('s3'),
   STORAGE_ENDPOINT: z.string().optional(),
   STORAGE_REGION: z.string().default('auto'),
   STORAGE_BUCKET: z.string().default('crm-documents'),
   STORAGE_ACCESS_KEY_ID: z.string().optional(),
   STORAGE_SECRET_ACCESS_KEY: z.string().optional(),
-  STORAGE_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
+  STORAGE_FORCE_PATH_STYLE: booleanEnv(false),
   STORAGE_PUBLIC_URL: z.string().optional(),
   STORAGE_MAX_UPLOAD_MB: z.coerce.number().default(25),
+  // Only used when STORAGE_PROVIDER=local (no Docker/MinIO or real S3/R2
+  // credentials available in this dev environment — see LocalDiskStorageProvider).
+  STORAGE_LOCAL_ROOT: z.string().default('./storage-uploads'),
+  STORAGE_LOCAL_PUBLIC_BASE_URL: z.string().optional(),
 
   // Email
   EMAIL_PROVIDER: z.enum(['smtp', 'ses', 'sendgrid']).default('smtp'),

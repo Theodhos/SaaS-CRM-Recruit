@@ -28,6 +28,7 @@ export const TENANT_SCOPED_MODELS = [
   'job',
   'pipeline',
   'application',
+  'applicationStageNote',
   'activity',
   'task',
   'calendarEvent',
@@ -46,6 +47,9 @@ export const TENANT_SCOPED_MODELS = [
   'userEngagementEvent',
   'auditLog',
   'integration',
+  'phone',
+  'phoneCall',
+  'phoneImport',
 ] as const;
 
 export type TenantScopedModel = (typeof TENANT_SCOPED_MODELS)[number];

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { DatabaseService } from '../../../infrastructure/database/database.service';
+import { DatabaseService } from '../../../infrastructure/database/database.service';
 
 /**
  * Tenant-scoped data access for 'talent-pools'. Always resolve the client via

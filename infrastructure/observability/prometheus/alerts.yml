@@ -1,0 +1,211 @@
+# Alert rules. Severity: critical = wake someone up; warning = look during working hours.
+# Thresholds are starting points — tune them against the baselines in docs/operations/performance.md.
+groups:
+  - name: availability
+    rules:
+      - alert: ApiInstanceDown
+        expr: up{job="crm-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "API replica {{ $labels.instance }} is not scraping"
+          runbook: "docs/operations/runbook.md#api-instance-down"
+
+      - alert: PlatformUnreachable
+        expr: probe_success{job="probe-http"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.instance }} fails its external probe"
+          runbook: "docs/operations/runbook.md#platform-unreachable"
+
+      - alert: NoHealthyApiReplicas
+        expr: count(up{job="crm-api"} == 1) < 1 or absent(up{job="crm-api"})
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "No API replica is up"
+
+  - name: api
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="crm-api",status_code=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total{job="crm-api"}[5m])), 1) > 0.02
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "More than 2% of API requests fail with 5xx"
+          runbook: "docs/operations/runbook.md#high-error-rate"
+
+      - alert: SlowApiP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="crm-api"}[5m]))) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API p95 latency above 1s for 10 minutes"
+
+      - alert: SlowApiP99
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job="crm-api"}[5m]))) > 3
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API p99 latency above 3s for 10 minutes"
+
+      - alert: EventLoopLag
+        expr: nodejs_eventloop_lag_p99_seconds{job="crm-api"} > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Event loop lag p99 > 200ms on {{ $labels.instance }} (CPU-bound work in a request?)"
+
+      - alert: ApiHeapNearLimit
+        expr: nodejs_heap_size_used_bytes{job="crm-api"} / nodejs_heap_size_limit_bytes{job="crm-api"} > 0.85
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Heap above 85% of its limit on {{ $labels.instance }} (memory leak or an unbounded result set)"
+
+      - alert: RateLimitingSpike
+        expr: sum(rate(http_requests_total{job="crm-api",status_code="429"}[5m])) > 5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Sustained 429s — abuse, or a limit that is too tight for legitimate traffic"
+
+  - name: queues
+    rules:
+      - alert: QueueBacklog
+        expr: sum by (queue) (crm_queue_jobs{state="waiting"}) > 500
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Queue {{ $labels.queue }} has had more than 500 waiting jobs for 10 minutes — add workers"
+
+      - alert: JobsFailing
+        expr: sum by (queue) (increase(crm_job_duration_seconds_count{status="failed"}[15m])) > 10
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Queue {{ $labels.queue }} failed more than 10 jobs in 15 minutes"
+
+      - alert: DeadLetterGrowing
+        expr: sum by (queue) (crm_queue_jobs{state="failed"}) > 50
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Queue {{ $labels.queue }} holds more than 50 permanently failed jobs (dead-letter)"
+
+      - alert: WorkerDown
+        expr: absent(up{job="crm-worker"} == 1)
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "No worker is running — queued jobs will not be processed"
+
+  - name: postgres
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL is not reachable by the exporter"
+
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 80% of max_connections in use (check pool sizes x replicas)"
+
+      - alert: PostgresCacheHitRatioLow
+        expr: |
+          sum(rate(pg_stat_database_blks_hit[10m]))
+            / clamp_min(sum(rate(pg_stat_database_blks_hit[10m])) + sum(rate(pg_stat_database_blks_read[10m])), 1) < 0.95
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Buffer cache hit ratio below 95% — working set exceeds shared_buffers / RAM"
+
+      - alert: PostgresDeadlocks
+        expr: increase(pg_stat_database_deadlocks[15m]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Deadlocks detected"
+
+      - alert: PostgresLongRunningTransaction
+        expr: max(pg_stat_activity_max_tx_duration{state!="idle"}) > 300
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "A transaction has been open for more than 5 minutes"
+
+      - alert: PostgresDiskFilling
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.15
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Less than 15% disk space left"
+
+  - name: redis
+    rules:
+      - alert: RedisDown
+        expr: redis_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "Redis ({{ $labels.redis }}) is down. Queue: jobs stop. Cache: the API falls back to the database (fail-open)."
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9 and redis_memory_max_bytes > 0
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Redis ({{ $labels.redis }}) above 90% of maxmemory"
+
+      - alert: RedisQueueEvicting
+        expr: increase(redis_evicted_keys_total{redis="queues"}[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "The QUEUE Redis is evicting keys — jobs may be lost. It must run with maxmemory-policy noeviction."
+
+      - alert: CacheHitRatioLow
+        expr: |
+          rate(redis_keyspace_hits_total{redis="cache"}[15m])
+            / clamp_min(rate(redis_keyspace_hits_total{redis="cache"}[15m]) + rate(redis_keyspace_misses_total{redis="cache"}[15m]), 0.001) < 0.5
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Cache hit ratio below 50% for 30 minutes (TTL too short, or keys too specific)"
+
+  - name: infrastructure
+    rules:
+      - alert: ContainerRestarting
+        expr: increase(container_start_time_seconds{name=~"crm-.*"}[15m]) > 3
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} restarted more than 3 times in 15 minutes"
+
+      - alert: HostCpuHigh
+        expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Host CPU above 85% for 15 minutes — scale out"
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.1
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Less than 10% memory available"
+
+      - alert: BackupStale
+        expr: time() - crm_backup_last_success_timestamp_seconds > 129600
+        labels: { severity: critical }
+        annotations:
+          summary: "No successful database backup in the last 36 hours"
+          runbook: "docs/operations/backup-and-recovery.md"

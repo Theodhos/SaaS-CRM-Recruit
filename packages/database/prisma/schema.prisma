@@ -55,6 +55,14 @@ enum CompanyStatus {
   INACTIVE
 }
 
+/// Column of a company on the "Pipeline Companies" board (sales side: winning the company as a client).
+enum CompanyPipelineStage {
+  NEW
+  IN_CONVERSATION
+  WIN
+  LOST
+}
+
 enum ContactStatus {
   ACTIVE
   INACTIVE
@@ -170,6 +178,12 @@ enum DocumentType {
   OTHER
 }
 
+/// How the placed person is employed — chosen per placement, shown and filterable on Active Employees.
+enum PlacementEmploymentType {
+  PERMANENT
+  TEMPORARY
+}
+
 enum PlacementStatus {
   ACTIVE
   COMPLETED
@@ -214,6 +228,8 @@ model Organisation {
   slug      String   @unique
   logoUrl   String?
   status    String   @default("ACTIVE") // ACTIVE | TRIAL | SUSPENDED
+  /// The organisation's own settings, e.g. `payDefaults` (see OrganisationsService).
+  settings  Json     @default("{}")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -228,6 +244,7 @@ model Organisation {
   jobs                Job[]
   pipelines           Pipeline[]
   applications        Application[]
+  applicationStageNotes ApplicationStageNote[]
   activities          Activity[]
   tasks               Task[]
   calendarEvents      CalendarEvent[]
@@ -246,8 +263,70 @@ model Organisation {
   userEngagementEvents UserEngagementEvent[]
   auditLogs           AuditLog[]
   integrations        Integration[]
+  phones              Phone[]
+  phoneCalls          PhoneCall[]
+  phoneImports        PhoneImport[]
 
   @@map("organisations")
+}
+
+enum LoginChallengeStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  CANCELLED
+}
+
+/// Second step of every login: the password was right, and a one-time code was e-mailed. The session is issued only
+/// when the code is confirmed. Neither the code nor the browser's challenge token is stored — only their hashes.
+/// Not tenant-scoped, like the rest of authentication (see AuthRepository): it exists before a session does.
+model LoginChallenge {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the opaque token the browser holds in an httpOnly cookie.
+  tokenHash String @unique
+  /// HMAC-SHA256 of the 6-digit code.
+  codeHash  String
+  status    LoginChallengeStatus @default(PENDING)
+
+  /// When the current code stops being accepted (5 minutes after it was sent).
+  expiresAt   DateTime
+  /// When the whole challenge ends, however many codes were sent.
+  closesAt    DateTime
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(5)
+  sendCount   Int      @default(1)
+  lastSentAt  DateTime @default(now())
+  verifiedAt  DateTime?
+
+  requestIp String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, status])
+  @@index([expiresAt])
+  @@map("login_challenges")
+}
+
+/// A "choose a new password" link that was e-mailed. Good once, for 30 minutes; only the hash of its token is kept.
+model PasswordReset {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  requestIp String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_resets")
 }
 
 model User {
@@ -262,6 +341,13 @@ model User {
   avatarUrl    String?
   status       UserStatus @default(INVITED)
 
+  /// The pages of the CRM this user works with, chosen by the admin (the sidebar paths, e.g. "/pipeline").
+  /// Empty = every page a member may use. Admins always see everything.
+  allowedSections String[] @default([])
+
+  /// Sign-in asks this user for a code sent to their e-mail, after the password (set by the admin).
+  loginOtpEnabled Boolean @default(false)
+
   roleId String
   role   Role   @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
@@ -269,6 +355,8 @@ model User {
   updatedAt DateTime @updatedAt
 
   teamMemberships TeamMember[]
+  loginChallenges LoginChallenge[]
+  passwordResets  PasswordReset[]
 
   ownedCompanies    Company[]     @relation("CompanyOwner")
   ownedContacts     Contact[]     @relation("ContactOwner")
@@ -285,6 +373,9 @@ model User {
   calendarEvents CalendarEvent[] @relation("CalendarEventOwner")
   activities     Activity[]      @relation("ActivityUser")
   interviews     Interview[]     @relation("InterviewInterviewer")
+  phones         Phone[]         @relation("PhoneOwner")
+  phoneCalls     PhoneCall[]     @relation("PhoneCallAgent")
+  phoneImports   PhoneImport[]   @relation("PhoneImportUser")
 
   uploadedDocuments          Document[]          @relation("DocumentUploader")
   uploadedCandidateDocuments CandidateDocument[]  @relation("CandidateDocumentUploader")
@@ -303,6 +394,8 @@ model User {
 
   @@unique([organisationId, email])
   @@index([organisationId])
+  // Login looks a user up by e-mail alone (before the organisation is known), which the unique above cannot serve.
+  @@index([email])
   @@map("users")
 }
 
@@ -403,6 +496,15 @@ model Company {
   country  String?
   status   CompanyStatus @default(PROSPECT)
 
+  pipelineStage CompanyPipelineStage @default(NEW)
+
+  /// Free text about the company: where it operates, the services it offers, anything worth knowing.
+  about String?
+
+  /// What the Pipeline Companies pop-up keeps: { stages: { NEW: { notes, updatedAt, enteredAt }, … }, pay: { … } } —
+  /// the shape lives in the API (modules/companies/service/pipeline-record.ts).
+  pipelineRecord Json @default("{}")
+
   ownerId String?
   owner   User?   @relation("CompanyOwner", fields: [ownerId], references: [id], onDelete: SetNull)
 
@@ -414,12 +516,14 @@ model Company {
   jobs           Job[]
   activities     Activity[]
   tasks          Task[]
+  phones         Phone[]
   calendarEvents CalendarEvent[]
   emailThreads   EmailThread[]
   documents      Document[]
   comments       Comment[]
   placements     Placement[]
   retainers      Retainer[]
+  candidates     Candidate[]
 
   @@index([organisationId])
   @@index([organisationId, status])
@@ -451,6 +555,7 @@ model Contact {
 
   activities              Activity[]
   tasks                   Task[]
+  phones                  Phone[]
   calendarEvents          CalendarEvent[]
   emailThreads            EmailThread[]
   documents               Document[]
@@ -458,6 +563,7 @@ model Contact {
   distributionListMembers DistributionListMember[]
 
   @@index([organisationId])
+  @@index([organisationId, createdAt(sort: Desc)])
   @@index([companyId])
   @@index([ownerId])
   @@map("contacts")
@@ -486,15 +592,33 @@ model Candidate {
   ownerId String?
   owner   User?   @relation("CandidateOwner", fields: [ownerId], references: [id], onDelete: SetNull)
 
+  // The specific open Job this candidate is being considered for, set while
+  // they're still raw/unassigned (no Application yet) — what lets the
+  // potential-ranking compare candidates against each other for the SAME
+  // job, not just score each one in isolation. Independent of Application:
+  // once "Add to pipeline" is clicked this stops mattering (the Application
+  // carries its own jobId from here on), so it's never required.
+  interestedJobId String?
+  interestedJob   Job?    @relation("CandidateInterestedJob", fields: [interestedJobId], references: [id], onDelete: SetNull)
+
+  // Employer named in `currentCompany` (free text — from manual entry or CV
+  // scan), resolved to a Companies row by name match, auto-creating one if
+  // none exists yet. Optional and independent of `currentCompany`: this is
+  // a best-effort CRM link, not a guarantee the text and relation agree.
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
   applications      Application[]
   documents         CandidateDocument[]
+  legalDocuments    Document[]          @relation("CandidateLegalDocument")
   activities        Activity[]
   tasks             Task[]
   calendarEvents    CalendarEvent[]
+  phones            Phone[]
   candidateTags     CandidateTag[]
   talentPoolMembers TalentPoolMember[]
   placements        Placement[]
@@ -503,8 +627,14 @@ model Candidate {
 
   @@index([organisationId])
   @@index([organisationId, status])
+  // List pages (`WHERE organisationId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT n`): walk the index
+  // in order and stop after n rows instead of scanning + sorting the whole tenant. Measured at 1M rows: ~500 ms -> ~0 ms.
+  @@index([organisationId, createdAt(sort: Desc)])
+  @@index([organisationId, status, createdAt(sort: Desc)])
   @@index([organisationId, email])
   @@index([ownerId])
+  @@index([companyId])
+  @@index([interestedJobId])
   @@map("candidates")
 }
 
@@ -583,16 +713,30 @@ model Job {
   organisationId String
   organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
 
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  // Optional: a Job can be created before its Company is known (or matched
+  // by name at creation time, same as Candidate.companyId) — SetNull rather
+  // than Cascade so an unlinked/later-linked Company can be deleted without
+  // silently deleting the Job it was never really tied to.
+  companyId String?
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
   title          String
+  /// What the job is — the role in plain words.
   description    String?
+  /// What the candidate will do in the job, one duty per line.
+  responsibilities String?
+  /// What the job asks of the candidate (skills, qualifications, licences), one requirement per line.
+  requirements   String?
+  /// Years of experience the job asks for; max is null for "at least min".
+  experienceYearsMin Int?
+  experienceYearsMax Int?
   location       String?
   employmentType EmploymentType @default(PERMANENT)
   salaryMin      Decimal?       @db.Decimal(12, 2)
   salaryMax      Decimal?       @db.Decimal(12, 2)
   currency       String         @default("USD")
+  /// The pay package beyond the salary range: bonus, benefits, allowances, leave — one item per line.
+  compensationPackage String?
   status         JobStatus      @default(OPEN)
 
   ownerId String?
@@ -604,16 +748,18 @@ model Job {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  applications   Application[]
-  activities     Activity[]
-  tasks          Task[]
-  calendarEvents CalendarEvent[]
-  documents      Document[]
-  comments       Comment[]
-  placements     Placement[]
+  applications        Application[]
+  activities          Activity[]
+  tasks               Task[]
+  calendarEvents      CalendarEvent[]
+  documents           Document[]
+  comments            Comment[]
+  placements          Placement[]
+  interestedCandidates Candidate[] @relation("CandidateInterestedJob")
 
   @@index([organisationId])
   @@index([organisationId, status])
+  @@index([organisationId, createdAt(sort: Desc)])
   @@index([companyId])
   @@index([ownerId])
   @@map("jobs")
@@ -632,6 +778,9 @@ model Pipeline {
 
   name        String
   description String?
+  /// What a candidate becomes when they reach this scheme's "Placed" stage: a permanent or a temporary employee
+  /// (the Placement created automatically inherits it — see ApplicationsService.maybeAutoPlace).
+  employmentType PlacementEmploymentType @default(PERMANENT)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -654,9 +803,33 @@ model PipelineStage {
   updatedAt DateTime          @updatedAt
 
   applications Application[]
+  checklistItems PipelineStageChecklistItem[]
+  stageNotes     ApplicationStageNote[]
 
   @@unique([pipelineId, order])
   @@map("pipeline_stages")
+}
+
+// The "phase test/questions" a stage requires — a template checklist that
+// every Application passing through this stage can be marked against (see
+// ApplicationChecklistItem). Has no organisationId of its own, same as
+// PipelineStage — tenant ownership is always proven by walking up to the
+// parent Pipeline (see PipelineStagesService).
+model PipelineStageChecklistItem {
+  id              String        @id @default(cuid())
+  pipelineStageId String
+  pipelineStage   PipelineStage @relation(fields: [pipelineStageId], references: [id], onDelete: Cascade)
+
+  label     String
+  order     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  responses ApplicationChecklistItem[]
+
+  @@unique([pipelineStageId, order])
+  @@index([pipelineStageId])
+  @@map("pipeline_stage_checklist_items")
 }
 
 // THE most important relationship in the ATS: a Candidate is never linked
@@ -697,14 +870,74 @@ model Application {
   interviews     Interview[]
   documents      Document[]
   comments       Comment[]
+  checklistResponses ApplicationChecklistItem[]
 
+  stageNotes ApplicationStageNote[]
   @@unique([candidateId, jobId])
   @@index([organisationId])
   @@index([organisationId, status])
+  // Applications list is `ORDER BY appliedAt DESC LIMIT n`. Measured at 1.2M rows: ~510 ms -> ~0 ms.
+  @@index([organisationId, appliedAt(sort: Desc)])
   @@index([jobId])
   @@index([pipelineStageId])
   @@index([ownerId])
   @@map("applications")
+}
+
+// One Application's completion state for one PipelineStageChecklistItem —
+// the per-candidate answer to that stage's "test/question". No
+// organisationId of its own; tenant ownership is proven via the Application
+// (which is tenant-scoped) before this is ever touched (see
+// ApplicationsService.toggleChecklistItem).
+/// What was discussed with an applicant at one pipeline stage, plus the pay calculation agreed there
+/// (hourly rate -> per day -> per month, and the agency fee). One row per application per stage, so the
+/// history follows the applicant from stage to stage. Notes belong to the application's owner (owner scope).
+model ApplicationStageNote {
+  id             String       @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  pipelineStageId String
+  pipelineStage   PipelineStage @relation(fields: [pipelineStageId], references: [id], onDelete: Cascade)
+
+  notes        String?
+  hourlyRate   Decimal? @db.Decimal(10, 2)
+  hoursPerDay  Int      @default(8)
+  daysPerMonth Int      @default(21)
+  feePercent   Decimal? @db.Decimal(5, 2)
+  currency     String   @default("USD")
+  /// The stage's own form (screening result, interview ratings, offer terms, rejection reason…) as key/value pairs —
+  /// the field set per stage lives in the web app (features/pipelines/stage-forms.ts).
+  fields       Json     @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([applicationId, pipelineStageId])
+  @@index([organisationId])
+  @@map("application_stage_notes")
+}
+
+model ApplicationChecklistItem {
+  id            String      @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  checklistItemId String
+  checklistItem    PipelineStageChecklistItem @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([applicationId, checklistItemId])
+  @@index([applicationId])
+  @@map("application_checklist_items")
 }
 
 // =============================================================================
@@ -763,6 +996,12 @@ model Task {
   priority    TaskPriority @default(MEDIUM)
   dueDate     DateTime?
 
+  // Set once the "overdue" notification has actually been sent (see
+  // TasksRemindersService) — the guard against re-notifying on every cron
+  // tick while it sits unfinished past its due date. Cleared whenever
+  // dueDate is changed, so a rescheduled task can trigger it again later.
+  overdueNotifiedAt DateTime?
+
   assignedToId String
   assignedTo   User   @relation("TaskAssignee", fields: [assignedToId], references: [id], onDelete: Restrict)
   createdById  String
@@ -784,6 +1023,8 @@ model Task {
 
   @@index([organisationId])
   @@index([assignedToId, status])
+  // Tasks list is `ORDER BY dueDate ASC, createdAt DESC LIMIT n`. Measured at 500k rows: ~440 ms -> ~0 ms.
+  @@index([organisationId, dueDate, createdAt(sort: Desc)])
   @@map("tasks")
 }
 
@@ -799,6 +1040,11 @@ model CalendarEvent {
   location   String?
   meetingUrl String?
   status     CalendarEventStatus @default(SCHEDULED)
+
+  // Set once the "starting soon" reminder notification has actually been
+  // sent (see CalendarRemindersService) — the guard against re-notifying on
+  // every cron tick while the event sits inside the reminder window.
+  reminderSentAt DateTime?
 
   userId String
   user   User   @relation("CalendarEventOwner", fields: [userId], references: [id], onDelete: Restrict)
@@ -819,6 +1065,7 @@ model CalendarEvent {
 
   @@index([organisationId])
   @@index([organisationId, startAt])
+  @@index([status, startAt, reminderSentAt])
   @@map("calendar_events")
 }
 
@@ -836,6 +1083,18 @@ model Interview {
   meetingUrl  String?
   status      InterviewStatus @default(SCHEDULED)
   notes       String?
+
+  /// IANA time zone the slot was picked in — the e-mail and the Zoom meeting are expressed in it.
+  timezone     String?
+  /// Where the meeting link came from: "zoom" (created through the Zoom API) or "manual" (a pasted link).
+  provider     String?
+  /// Zoom's start_url for the host — never sent to the candidate.
+  hostUrl      String?
+  /// Set once the invitation e-mail went out, and to which address.
+  inviteSentAt DateTime?
+  inviteSentTo String?
+  /// The interviewer's calendar entry for this slot — removed together with the interview.
+  calendarEventId String?
 
   interviewerId String?
   interviewer   User?   @relation("InterviewInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
@@ -929,11 +1188,17 @@ model Document {
   job           Job?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
   applicationId String?
   application   Application? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  candidateId   String?
+  candidate     Candidate?   @relation("CandidateLegalDocument", fields: [candidateId], references: [id], onDelete: Cascade)
+  placementId   String?
+  placement     Placement?   @relation(fields: [placementId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([organisationId])
+  @@index([placementId])
+  @@index([candidateId])
   @@map("documents")
 }
 
@@ -1062,6 +1327,7 @@ model Placement {
   startDate DateTime
   endDate   DateTime?
   status    PlacementStatus @default(ACTIVE)
+  employmentType PlacementEmploymentType @default(PERMANENT)
 
   ownerId String?
   owner   User?   @relation("PlacementOwner", fields: [ownerId], references: [id], onDelete: SetNull)
@@ -1069,7 +1335,8 @@ model Placement {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  fees Fee[]
+  fees      Fee[]
+  documents Document[]
 
   @@index([organisationId])
   @@index([candidateId])
@@ -1158,12 +1425,21 @@ model Notification {
   type    String // e.g. "TASK_ASSIGNED", "APPLICATION_STATUS_CHANGED", "INTERVIEW_SCHEDULED"
   title   String
   message String?
+  // Where clicking this notification should take you — a relative in-app
+  // path (e.g. "/tasks?taskId=…", "/candidates/…") straight to the record
+  // it's about. Optional: not every notification has a single obvious
+  // destination.
+  link    String?
   readAt  DateTime?
 
   createdAt DateTime @default(now())
 
   @@index([organisationId])
   @@index([userId, readAt])
+  // Bell list is `WHERE userId AND organisationId ORDER BY createdAt DESC LIMIT n` (~175 ms -> ~0 ms at 1M rows); the
+  // unread badge (polled every 30 s per open tab) counts `readAt IS NULL` and can now be answered from the index alone.
+  @@index([userId, organisationId, createdAt(sort: Desc)])
+  @@index([userId, organisationId, readAt])
   @@map("notifications")
 }
 
@@ -1270,4 +1546,145 @@ model Integration {
 
   @@unique([organisationId, provider])
   @@map("integrations")
+}
+
+// =============================================================================
+// PHONES — calling lists imported from Excel/CSV, called from the browser
+// =============================================================================
+
+enum PhoneStatus {
+  READY
+  DO_NOT_CALL
+}
+
+enum PhoneCallDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum PhoneCallStatus {
+  INITIATED
+  RINGING
+  ANSWERED
+  NO_ANSWER
+  BUSY
+  FAILED
+  REJECTED
+  ENDED
+}
+
+enum PhoneImportStatus {
+  PREVIEW
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// A number on an instructor's calling list. The phone is the primary datum; name, e-mail and company are whatever
+/// the imported file had. `normalizedPhone` (E.164) is what duplicates are detected on.
+model Phone {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  name            String?
+  phone           String
+  normalizedPhone String
+  email           String?
+  company         String?
+  source          String?
+  status          PhoneStatus @default(READY)
+
+  /// Denormalised from the calls so the list filters (never called / answered / busy…) stay one indexed column.
+  lastCallAt     DateTime?
+  lastCallStatus PhoneCallStatus?
+  callCount      Int              @default(0)
+
+  ownerId String?
+  owner   User?   @relation("PhoneOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  /// Best-effort links to CRM records that already existed when the file was imported (never auto-created).
+  candidateId String?
+  candidate   Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  contactId   String?
+  contact     Contact?   @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  companyId   String?
+  companyRef  Company?   @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  importId String?
+  import   PhoneImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
+  calls PhoneCall[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([organisationId, normalizedPhone])
+  @@index([organisationId, lastCallStatus])
+  @@index([organisationId, createdAt])
+  @@index([ownerId])
+  @@map("phones")
+}
+
+model PhoneCall {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  phoneId String
+  phone   Phone  @relation(fields: [phoneId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation("PhoneCallAgent", fields: [userId], references: [id], onDelete: Restrict)
+
+  provider       String
+  providerCallId String?            @unique
+  direction      PhoneCallDirection @default(OUTBOUND)
+  status         PhoneCallStatus    @default(INITIATED)
+
+  startedAt       DateTime?
+  answeredAt      DateTime?
+  endedAt         DateTime?
+  durationSeconds Int?
+  notes           String?
+  /// Sequence number of the last provider event applied — webhook processing stays idempotent and ordered.
+  lastEventSeq Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organisationId])
+  @@index([phoneId, createdAt])
+  @@map("phone_calls")
+}
+
+model PhoneImport {
+  id             String   @id @default(cuid())
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User   @relation("PhoneImportUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  fileName       String
+  defaultCountry String
+  status         PhoneImportStatus @default(PREVIEW)
+
+  totalRows     Int @default(0)
+  validRows     Int @default(0)
+  duplicateRows Int @default(0)
+  invalidRows   Int @default(0)
+  importedRows  Int @default(0)
+  skippedRows   Int @default(0)
+  failedRows    Int @default(0)
+  /// Rows that were not imported and why (capped) — the downloadable error report.
+  errors Json?
+
+  phones Phone[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  finishedAt DateTime?
+
+  @@index([organisationId, createdAt])
+  @@map("phone_imports")
 }

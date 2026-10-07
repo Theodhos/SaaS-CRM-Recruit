@@ -1,3 +1,3 @@
-// AuditLogs module — dto placeholder. Populated alongside the module's
-// Phase 2 implementation. Intentionally empty in Phase 1.
-export {};
+import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
+
+export class ListAuditLogsQueryDto extends PaginationQueryDto {}

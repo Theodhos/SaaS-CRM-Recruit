@@ -5,7 +5,7 @@
   "description": "BullMQ background job processors (email, documents, CV parsing, notifications, analytics, reports, imports/exports, scheduled tasks)",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsup src/main.ts --format cjs --out-dir dist --clean --target node20",
+    "build": "tsup",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
     "lint": "eslint . --ext .ts",
