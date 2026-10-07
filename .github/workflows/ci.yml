@@ -118,7 +118,7 @@ jobs:
           echo "repo=$(echo ghcr.io/${{ github.repository }} | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
           echo "tag=${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: infrastructure/docker/${{ matrix.image }}.Dockerfile
@@ -134,7 +134,7 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.image }},mode=max
       - name: Migration image (api only)
         if: matrix.image == 'api' && github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: infrastructure/docker/api.Dockerfile
